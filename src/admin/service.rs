@@ -2,10 +2,11 @@
 
 use std::sync::Arc;
 
+use crate::kiro::model::credentials::KiroCredentials;
 use crate::kiro::token_manager::MultiTokenManager;
 
 use super::error::AdminServiceError;
-use super::types::{BalanceResponse, CredentialStatusItem, CredentialsStatusResponse};
+use super::types::{BalanceResponse, CredentialStatusItem, CredentialsStatusResponse, UploadCredentialResponse, UploadedCredential};
 
 /// Admin 服务
 ///
@@ -44,6 +45,37 @@ impl AdminService {
             current_index: snapshot.current_index,
             credentials,
         }
+    }
+
+    /// 上传凭据（从文件上传的 JSON 格式）
+    pub fn upload_credential(&self, uploaded: UploadedCredential) -> Result<UploadCredentialResponse, AdminServiceError> {
+        let email = uploaded.email.clone();
+
+        // 获取当前凭据数量作为新凭据的优先级
+        let priority = self.token_manager.total_count() as u32;
+
+        // 转换为 KiroCredentials
+        let credentials = uploaded.into_kiro_credentials(priority)
+            .map_err(|e| AdminServiceError::InvalidRequest(e))?;
+
+        // 添加到 token manager
+        let (index, total) = self.token_manager.add_credential(credentials)
+            .map_err(|e| AdminServiceError::InternalError(e.to_string()))?;
+
+        Ok(UploadCredentialResponse {
+            success: true,
+            message: format!("凭据已添加，索引: {}", index),
+            index,
+            total,
+            email,
+        })
+    }
+
+    /// 删除凭据
+    pub fn delete_credential(&self, index: usize) -> Result<usize, AdminServiceError> {
+        let total = self.token_manager.snapshot().total;
+        self.token_manager.remove_credential(index)
+            .map_err(|e| self.classify_error(e, index, total))
     }
 
     /// 设置凭据禁用状态

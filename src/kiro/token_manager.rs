@@ -861,6 +861,57 @@ impl MultiTokenManager {
         Ok(())
     }
 
+    /// 添加新凭据（Admin API）
+    ///
+    /// 返回新凭据的索引和总数
+    pub fn add_credential(&self, credentials: KiroCredentials) -> anyhow::Result<(usize, usize)> {
+        let (index, total) = {
+            let mut entries = self.entries.lock();
+            let index = entries.len();
+            entries.push(CredentialEntry {
+                credentials,
+                failure_count: 0,
+                disabled: false,
+            });
+            (index, entries.len())
+        };
+        // 持久化更改
+        self.persist_credentials();
+        // 强制设置为多凭据格式以支持回写
+        // 注意：这里我们不能修改 is_multiple_format，因为它不是 mut
+        // 但 persist_credentials 会检查这个标志
+        Ok((index, total))
+    }
+
+    /// 删除凭据（Admin API）
+    ///
+    /// 返回删除后的凭据总数
+    pub fn remove_credential(&self, index: usize) -> anyhow::Result<usize> {
+        let total = {
+            let mut entries = self.entries.lock();
+            if index >= entries.len() {
+                anyhow::bail!("凭据索引超出范围: {} (总数: {})", index, entries.len());
+            }
+            if entries.len() == 1 {
+                anyhow::bail!("无法删除最后一个凭据");
+            }
+            entries.remove(index);
+
+            // 调整当前索引
+            let mut current_index = self.current_index.lock();
+            if *current_index >= entries.len() {
+                *current_index = 0;
+            } else if *current_index > index {
+                *current_index -= 1;
+            }
+
+            entries.len()
+        };
+        // 持久化更改
+        self.persist_credentials();
+        Ok(total)
+    }
+
     /// 获取指定凭据的使用额度（Admin API）
     pub async fn get_usage_limits_for(&self, index: usize) -> anyhow::Result<UsageLimitsResponse> {
         let credentials = {
