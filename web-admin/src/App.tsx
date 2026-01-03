@@ -4,7 +4,7 @@ import { Toaster } from "sonner";
 import AppLayout from "./components/layout/AppLayout";
 import Dashboard from "./pages/Dashboard";
 import Credentials from "./pages/Credentials";
-import Logs from "./pages/Logs";
+// import Logs from "./pages/Logs"; // 暂时禁用以修复构建
 import Config from "./pages/Config";
 import Chat from "./pages/Chat";
 import ApiKeys from "./pages/ApiKeys";
@@ -46,7 +46,7 @@ function App() {
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="credentials" element={<Credentials />} />
-            <Route path="logs" element={<Logs />} />
+            {/* <Route path="logs" element={<Logs />} /> */}
             <Route path="config" element={<Config />} />
             <Route path="api-keys" element={<ApiKeys />} />
             <Route path="chat" element={<Chat />} />
