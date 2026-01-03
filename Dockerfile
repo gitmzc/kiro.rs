@@ -1,6 +1,23 @@
 # 多阶段构建 Dockerfile for kiro.rs
-# Stage 1: 构建阶段
-FROM rust:1.83-slim as builder
+# Stage 1: 前端构建阶段
+FROM node:20-slim as frontend-builder
+
+WORKDIR /frontend
+
+# 复制前端配置文件
+COPY web-admin/package*.json ./
+
+# 安装依赖
+RUN npm ci
+
+# 复制前端源代码
+COPY web-admin/ ./
+
+# 构建前端
+RUN npm run build
+
+# Stage 2: 后端构建阶段
+FROM rust:1.83-slim as backend-builder
 
 # 安装构建依赖
 RUN apt-get update && apt-get install -y \
@@ -23,16 +40,21 @@ RUN mkdir src && \
 # 复制源代码
 COPY src ./src
 
-# 构建应用（这次会使用缓存的依赖）
+# 从前端构建阶段复制构建产物到 web-admin/dist
+# 这样 rust-embed 可以在编译时嵌入前端文件
+COPY --from=frontend-builder /frontend/dist ./web-admin/dist
+
+# 构建应用（这次会使用缓存的依赖，并嵌入前端文件）
 RUN cargo build --release
 
-# Stage 2: 运行阶段
+# Stage 3: 运行阶段
 FROM debian:bookworm-slim
 
 # 安装运行时依赖
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 # 创建非 root 用户
@@ -41,8 +63,8 @@ RUN useradd -m -u 1000 kiro
 # 设置工作目录
 WORKDIR /app
 
-# 从构建阶段复制二进制文件
-COPY --from=builder /build/target/release/kiro-rs /app/kiro-rs
+# 从后端构建阶段复制二进制文件（已包含嵌入的前端文件）
+COPY --from=backend-builder /build/target/release/kiro-rs /app/kiro-rs
 
 # 创建必要的目录
 RUN mkdir -p /app/data /app/logs && \
