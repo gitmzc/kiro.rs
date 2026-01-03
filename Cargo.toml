@@ -1,7 +1,7 @@
 [package]
 name = "kiro-rs"
 version = "2025.12.7"
-edition = "2024"
+edition = "2021"
 
 [profile.release]
 lto = true
