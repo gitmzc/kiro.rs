@@ -107,9 +107,8 @@ impl AdminService {
 
     /// 删除凭据
     pub fn delete_credential(&self, index: usize) -> Result<usize, AdminServiceError> {
-        let total = self.token_manager.snapshot().total;
         self.token_manager.remove_credential(index)
-            .map_err(|e| self.classify_error(e, index, total))
+            .map_err(|e| AdminServiceError::InternalError(e.to_string()))
     }
 
     /// 设置凭据禁用状态
@@ -162,8 +161,8 @@ impl AdminService {
 
         // 检查余额是否用完，如果用完则自动禁用
         if remaining <= 0.0 {
-            if let Err(e) = self.token_manager.check_and_disable_if_exhausted(index).await {
-                tracing::warn!("检查并禁用凭据 #{} 失败: {}", index, e);
+            if let Err(e) = self.token_manager.check_and_disable_if_exhausted(id).await {
+                tracing::warn!("检查并禁用凭据 #{} 失败: {}", id, e);
             }
         }
 

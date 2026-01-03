@@ -945,11 +945,18 @@ impl MultiTokenManager {
     /// 添加新凭据（Admin API）
     ///
     /// 返回新凭据的索引和总数
-    pub fn add_credential(&self, credentials: KiroCredentials) -> anyhow::Result<(usize, usize)> {
+    pub fn add_credential(&self, mut credentials: KiroCredentials) -> anyhow::Result<(usize, usize)> {
         let (index, total) = {
             let mut entries = self.entries.lock();
+
+            // 为新凭据分配 ID（取当前最大 ID + 1）
+            let max_id = entries.iter().map(|e| e.id).max().unwrap_or(0);
+            let new_id = max_id + 1;
+            credentials.id = Some(new_id);
+
             let index = entries.len();
             entries.push(CredentialEntry {
+                id: new_id,
                 credentials,
                 failure_count: 0,
                 disabled: false,
@@ -1060,8 +1067,8 @@ impl MultiTokenManager {
     /// 检查凭据余额并在用完时自动禁用
     ///
     /// 返回 (是否已禁用, 剩余额度)
-    pub async fn check_and_disable_if_exhausted(&self, index: usize) -> anyhow::Result<(bool, f64)> {
-        let usage = self.get_usage_limits_for(index).await?;
+    pub async fn check_and_disable_if_exhausted(&self, id: u64) -> anyhow::Result<(bool, f64)> {
+        let usage = self.get_usage_limits_for(id).await?;
         let current = usage.current_usage();
         let limit = usage.usage_limit();
         let remaining = (limit - current).max(0.0);
@@ -1070,19 +1077,19 @@ impl MultiTokenManager {
         if remaining <= 0.0 {
             let was_disabled = {
                 let entries = self.entries.lock();
-                entries.get(index).map(|e| e.disabled).unwrap_or(true)
+                entries.iter().find(|e| e.id == id).map(|e| e.disabled).unwrap_or(true)
             };
 
             if !was_disabled {
-                self.set_disabled(index, true)?;
+                self.set_disabled(id, true)?;
                 tracing::warn!(
                     "凭据 #{} 余额已用完 ({:.0}/{:.0})，已自动禁用",
-                    index, current, limit
+                    id, current, limit
                 );
 
                 // 如果禁用的是当前凭据，切换到下一个
-                let current_index = *self.current_index.lock();
-                if index == current_index {
+                let current_id = *self.current_id.lock();
+                if id == current_id {
                     self.switch_to_next();
                 }
 

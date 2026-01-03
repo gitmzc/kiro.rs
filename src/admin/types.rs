@@ -68,6 +68,7 @@ impl UploadedCredential {
         }
 
         Ok(KiroCredentials {
+            id: None, // 新凭据暂时没有 ID，会在添加到管理器时分配
             access_token: self.access_token.filter(|s| !s.is_empty()),
             refresh_token: Some(refresh_token),
             profile_arn: None,
