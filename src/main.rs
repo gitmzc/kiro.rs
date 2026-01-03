@@ -75,10 +75,13 @@ async fn main() {
     // 初始化日志（stdout + 轮转文件 + SSE 广播）
     let log_broadcaster = admin::LogBroadcaster::new(1000);
 
+    // 创建 stdout writer（使用 non_blocking 包装以支持 Clone）
+    let (stdout_writer, _stdout_guard) = tracing_appender::non_blocking(std::io::stdout());
+
     // 创建组合 writer：同时写入 stdout 和广播
     let broadcast_writer = log_broadcaster.writer();
     let combined_writer = CombinedWriter {
-        file: std::io::stdout(),
+        file: stdout_writer,
         broadcast: broadcast_writer,
     };
 
