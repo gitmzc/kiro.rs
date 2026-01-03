@@ -10,3 +10,19 @@
 /data
 /logs
 kiro.pid
+
+# AI 工具会话文件（隐私）
+.codex-session
+.gemini-session
+.serena/
+.claude/
+
+# 系统文件
+.DS_Store
+
+# 测试文件
+test_*.py
+test_*.rs
+
+# GitHub workflows（如果包含敏感信息）
+.github/workflows/
