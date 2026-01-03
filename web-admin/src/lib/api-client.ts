@@ -201,6 +201,7 @@ export interface StatsRequestsResponse {
 }
 
 export interface CredentialStatus {
+  id: number;
   index: number;
   priority: number;
   disabled: boolean;

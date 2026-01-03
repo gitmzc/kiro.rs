@@ -54,17 +54,17 @@ export function CredentialsList() {
     },
   });
 
-  const fetchBalance = async (index: number) => {
-    setLoadingBalance(prev => ({ ...prev, [index]: true }));
+  const fetchBalance = async (id: number) => {
+    setLoadingBalance(prev => ({ ...prev, [id]: true }));
     try {
-      const balance = await apiClient.get<BalanceResponse>(`/credentials/${index}/balance`);
-      setBalanceInfo(prev => ({ ...prev, [index]: balance }));
+      const balance = await apiClient.get<BalanceResponse>(`/credentials/${id}/balance`);
+      setBalanceInfo(prev => ({ ...prev, [id]: balance }));
       toast.success(`余额: ${balance.remaining.toLocaleString()} / ${balance.usageLimit.toLocaleString()} (${(100 - balance.usagePercentage).toFixed(1)}%)`);
     } catch (error) {
       toast.error("查询余额失败");
-      setBalanceInfo(prev => ({ ...prev, [index]: null }));
+      setBalanceInfo(prev => ({ ...prev, [id]: null }));
     } finally {
-      setLoadingBalance(prev => ({ ...prev, [index]: false }));
+      setLoadingBalance(prev => ({ ...prev, [id]: false }));
     }
   };
 
@@ -131,7 +131,7 @@ export function CredentialsList() {
           </TableHeader>
           <TableBody>
             {credentials.credentials.map((cred) => (
-              <TableRow key={cred.index}>
+              <TableRow key={cred.id}>
                 <TableCell>{cred.index}</TableCell>
                 <TableCell>{cred.priority}</TableCell>
                 <TableCell>{cred.authMethod}</TableCell>
@@ -141,19 +141,19 @@ export function CredentialsList() {
                 </TableCell>
                 <TableCell>{cred.failureCount}</TableCell>
                 <TableCell className="text-xs">
-                  {balanceInfo[cred.index] ? (
-                    <span className={balanceInfo[cred.index]!.usagePercentage > 80 ? "text-red-500" : "text-green-500"}>
-                      {balanceInfo[cred.index]!.remaining.toLocaleString()} / {balanceInfo[cred.index]!.usageLimit.toLocaleString()}
+                  {balanceInfo[cred.id] ? (
+                    <span className={balanceInfo[cred.id]!.usagePercentage > 80 ? "text-red-500" : "text-green-500"}>
+                      {balanceInfo[cred.id]!.remaining.toLocaleString()} / {balanceInfo[cred.id]!.usageLimit.toLocaleString()}
                     </span>
                   ) : (
                     <Button
                       variant="ghost"
                       size="sm"
                       className="h-6 px-2 text-xs"
-                      onClick={() => fetchBalance(cred.index)}
-                      disabled={loadingBalance[cred.index]}
+                      onClick={() => fetchBalance(cred.id)}
+                      disabled={loadingBalance[cred.id]}
                     >
-                      {loadingBalance[cred.index] ? "查询中..." : "查询"}
+                      {loadingBalance[cred.id] ? "查询中..." : "查询"}
                     </Button>
                   )}
                 </TableCell>
