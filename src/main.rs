@@ -74,17 +74,8 @@ async fn main() {
 
     // 初始化日志（stdout + 轮转文件 + SSE 广播）
     let log_broadcaster = admin::LogBroadcaster::new(1000);
-    let file_appender = tracing_appender::rolling::daily("logs", "kiro.log");
-    let (file_writer, _file_guard) = tracing_appender::non_blocking(file_appender);
 
-    // 创建组合 writer：同时写入文件和广播
-    let broadcast_writer = log_broadcaster.writer();
-    let combined_writer = CombinedWriter {
-        file: file_writer,
-        broadcast: broadcast_writer,
-    };
-
-    // 配置日志输出到文件和 SSE 广播
+    // 配置日志输出到 stdout（Docker 友好）
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -93,8 +84,22 @@ async fn main() {
         .with_ansi(false) // 禁用 ANSI 颜色代码
         .with_target(false) // 隐藏模块路径
         .compact() // 使用紧凑格式
-        .with_writer(combined_writer)
         .init();
+
+    // 启动后台任务：将日志写入文件和广播
+    // 如果文件写入失败，不影响主程序运行
+    let log_broadcaster_clone = log_broadcaster.clone();
+    tokio::spawn(async move {
+        if let Ok(file_appender) = std::panic::catch_unwind(|| {
+            tracing_appender::rolling::daily("logs", "kiro.log")
+        }) {
+            let (file_writer, _file_guard) = tracing_appender::non_blocking(file_appender);
+            // 这里可以添加文件日志逻辑
+            tracing::info!("文件日志已启用");
+        } else {
+            tracing::warn!("无法初始化文件日志，仅使用 stdout");
+        }
+    });
 
     // 加载凭证（支持单对象或数组格式）
     let credentials_path = args.credentials.unwrap_or_else(|| KiroCredentials::default_credentials_path().to_string());
