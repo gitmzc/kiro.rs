@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  kiro-rs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kiro-rs
+    restart: unless-stopped
+    ports:
+      - "8990:8990"
+    volumes:
+      # 配置文件（必需）
+      - ./config.json:/app/config.json:ro
+      # 凭据文件（必需）
+      - ./credentials.json:/app/credentials.json:ro
+      # 数据持久化目录（可选）
+      - ./data:/app/data
+      # 日志目录（可选）
+      - ./logs:/app/logs
+    environment:
+      # 日志级别配置
+      - RUST_LOG=info
+      # 时区设置
+      - TZ=Asia/Shanghai
+    networks:
+      - kiro-network
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8990/v1/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  kiro-network:
+    driver: bridge

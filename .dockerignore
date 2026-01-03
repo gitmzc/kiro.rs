@@ -1,0 +1,57 @@
+# Rust 构建产物
+target/
+Cargo.lock
+
+# 配置和凭据文件（构建时不需要）
+config.json
+credentials.json
+
+# 数据和日志目录
+data/
+logs/
+auths/
+
+# Git 相关
+.git/
+.gitignore
+
+# IDE 配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.log
+kiro.pid
+
+# 测试文件
+test_*.py
+test_*.rs
+
+# 文档和示例
+*.md
+!README.md
+*.example.*
+
+# Web Admin 前端（如果需要前端，应该单独构建）
+web-admin/node_modules/
+web-admin/dist/
+web-admin/.vite/
+
+# Claude 和其他工具配置
+.claude/
+.codex-session
+.gemini-session
+.serena/
+
+# Docker 相关
+docker-compose.yml
+Dockerfile
+.dockerignore
