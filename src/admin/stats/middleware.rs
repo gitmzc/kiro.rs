@@ -90,6 +90,25 @@ impl StatsRecorder {
         let duration_ms = self.started_at.elapsed().as_millis() as i64;
         let tokens = self.tokens.lock().clone().unwrap_or_default();
         let total_tokens = tokens.input_tokens + tokens.output_tokens;
+
+        // 记录请求日志
+        let api_key_display = self.api_key_hash.as_ref()
+            .map(|h| format!("{}...", &h[..8]))
+            .unwrap_or_else(|| "none".to_string());
+
+        tracing::info!(
+            "{} {} - {} - {}ms - tokens: {}/{}/{} - model: {} - key: {}",
+            self.method,
+            self.path,
+            status,
+            duration_ms,
+            tokens.input_tokens,
+            tokens.output_tokens,
+            total_tokens,
+            tokens.model.as_deref().unwrap_or("none"),
+            api_key_display
+        );
+
         let stat = RequestStat {
             request_id: self.request_id.clone(),
             ts: chrono::Utc::now().timestamp(),
