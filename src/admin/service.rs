@@ -1,11 +1,14 @@
 //! Admin API 业务逻辑服务
 
 use std::sync::Arc;
+use std::time::Instant;
 
-use crate::kiro::model::credentials::KiroCredentials;
 use crate::kiro::token_manager::MultiTokenManager;
 
+use super::config::ConfigManager;
 use super::error::AdminServiceError;
+use super::logs::LogBroadcaster;
+use super::stats::StatsService;
 use super::types::{BalanceResponse, CredentialStatusItem, CredentialsStatusResponse, UploadCredentialResponse, UploadedCredential};
 
 /// Admin 服务
@@ -13,11 +16,42 @@ use super::types::{BalanceResponse, CredentialStatusItem, CredentialsStatusRespo
 /// 封装所有 Admin API 的业务逻辑
 pub struct AdminService {
     token_manager: Arc<MultiTokenManager>,
+    stats: Arc<StatsService>,
+    config_manager: ConfigManager,
+    log_broadcaster: LogBroadcaster,
+    started_at: Instant,
 }
 
 impl AdminService {
-    pub fn new(token_manager: Arc<MultiTokenManager>) -> Self {
-        Self { token_manager }
+    pub fn new(
+        token_manager: Arc<MultiTokenManager>,
+        stats: Arc<StatsService>,
+        config_manager: ConfigManager,
+        log_broadcaster: LogBroadcaster,
+    ) -> Self {
+        Self {
+            token_manager,
+            stats,
+            config_manager,
+            log_broadcaster,
+            started_at: Instant::now(),
+        }
+    }
+
+    pub fn stats(&self) -> Arc<StatsService> {
+        self.stats.clone()
+    }
+
+    pub fn config_manager(&self) -> &ConfigManager {
+        &self.config_manager
+    }
+
+    pub fn log_broadcaster(&self) -> LogBroadcaster {
+        self.log_broadcaster.clone()
+    }
+
+    pub fn uptime_seconds(&self) -> u64 {
+        self.started_at.elapsed().as_secs()
     }
 
     /// 获取所有凭据状态
@@ -125,6 +159,13 @@ impl AdminService {
         } else {
             0.0
         };
+
+        // 检查余额是否用完，如果用完则自动禁用
+        if remaining <= 0.0 {
+            if let Err(e) = self.token_manager.check_and_disable_if_exhausted(index).await {
+                tracing::warn!("检查并禁用凭据 #{} 失败: {}", index, e);
+            }
+        }
 
         Ok(BalanceResponse {
             id,

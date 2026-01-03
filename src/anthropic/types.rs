@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::runtime_config;
+
 // === 错误响应 ===
 
 /// API 错误响应
@@ -73,7 +75,7 @@ pub struct Thinking {
 }
 
 fn default_budget_tokens() -> i32 {
-    20000
+    runtime_config::thinking_budget_tokens()
 }
 fn deserialize_budget_tokens<'de, D>(deserializer: D) -> Result<i32, D::Error>
 where

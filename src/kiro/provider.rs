@@ -184,6 +184,9 @@ impl KiroProvider {
             };
 
             // 发送请求
+            eprintln!("=== 发送 AWS API 请求 ===");
+            eprintln!("{}", request_body);
+            eprintln!("========================");
             let response = match self
                 .client
                 .post(&url)

@@ -1,0 +1,236 @@
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Play, Pause, RefreshCw, Trash2 } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient, type CredentialsStatusResponse, type SuccessResponse, type BalanceResponse } from "@/lib/api-client";
+import { toast } from "sonner";
+import { useState } from "react";
+
+export function CredentialsList() {
+  const queryClient = useQueryClient();
+  const [balanceInfo, setBalanceInfo] = useState<Record<number, BalanceResponse | null>>({});
+  const [loadingBalance, setLoadingBalance] = useState<Record<number, boolean>>({});
+
+  const { data: credentials, isLoading } = useQuery({
+    queryKey: ['credentials'],
+    queryFn: () => apiClient.get<CredentialsStatusResponse>("/credentials"),
+    refetchInterval: 10000, // Refresh every 10s
+  });
+
+  const toggleStatusMutation = useMutation({
+    mutationFn: ({ index, disabled }: { index: number; disabled: boolean }) =>
+      apiClient.post<SuccessResponse>(`/credentials/${index}/disabled`, { disabled }),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] });
+      toast.success(variables.disabled ? "凭据已禁用" : "凭据已启用");
+    },
+    onError: () => {
+      toast.error("操作失败，请重试");
+    },
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: (index: number) =>
+      apiClient.post<SuccessResponse>(`/credentials/${index}/reset`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] });
+      toast.success("失败计数已重置");
+    },
+    onError: () => {
+      toast.error("重置失败，请重试");
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (index: number) =>
+      apiClient.delete<SuccessResponse>(`/credentials/${index}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] });
+      toast.success("凭据已删除");
+    },
+    onError: () => {
+      toast.error("删除失败，请重试");
+    },
+  });
+
+  const fetchBalance = async (index: number) => {
+    setLoadingBalance(prev => ({ ...prev, [index]: true }));
+    try {
+      const balance = await apiClient.get<BalanceResponse>(`/credentials/${index}/balance`);
+      setBalanceInfo(prev => ({ ...prev, [index]: balance }));
+      toast.success(`余额: ${balance.remaining.toLocaleString()} / ${balance.usageLimit.toLocaleString()} (${(100 - balance.usagePercentage).toFixed(1)}%)`);
+    } catch (error) {
+      toast.error("查询余额失败");
+      setBalanceInfo(prev => ({ ...prev, [index]: null }));
+    } finally {
+      setLoadingBalance(prev => ({ ...prev, [index]: false }));
+    }
+  };
+
+  const getStatusText = (cred: CredentialsStatusResponse["credentials"][0]) => {
+    if (cred.disabled) return "Disabled";
+    if (cred.isCurrent) return "Active";
+    return "Standby";
+  };
+
+  const maskKey = (authMethod: string) => {
+    const prefixes: Record<string, string> = {
+      "idc": "idc-***",
+      "builder-id": "bid-***",
+      "social": "soc-***",
+    };
+    return prefixes[authMethod] || `${authMethod}-***`;
+  };
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>凭据列表</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="text-center text-muted-foreground py-8">加载中...</div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!credentials || credentials.credentials.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>凭据列表</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="text-center text-muted-foreground py-8">暂无凭据</div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>凭据列表 ({credentials.available} / {credentials.total} 可用)</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>索引</TableHead>
+              <TableHead>优先级</TableHead>
+              <TableHead>类型</TableHead>
+              <TableHead>Key</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>失败次数</TableHead>
+              <TableHead>余额</TableHead>
+              <TableHead>过期时间</TableHead>
+              <TableHead className="text-right">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {credentials.credentials.map((cred) => (
+              <TableRow key={cred.index}>
+                <TableCell>{cred.index}</TableCell>
+                <TableCell>{cred.priority}</TableCell>
+                <TableCell>{cred.authMethod}</TableCell>
+                <TableCell className="font-mono text-xs">{maskKey(cred.authMethod)}</TableCell>
+                <TableCell>
+                  <StatusBadge status={getStatusText(cred)} />
+                </TableCell>
+                <TableCell>{cred.failureCount}</TableCell>
+                <TableCell className="text-xs">
+                  {balanceInfo[cred.index] ? (
+                    <span className={balanceInfo[cred.index]!.usagePercentage > 80 ? "text-red-500" : "text-green-500"}>
+                      {balanceInfo[cred.index]!.remaining.toLocaleString()} / {balanceInfo[cred.index]!.usageLimit.toLocaleString()}
+                    </span>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => fetchBalance(cred.index)}
+                      disabled={loadingBalance[cred.index]}
+                    >
+                      {loadingBalance[cred.index] ? "查询中..." : "查询"}
+                    </Button>
+                  )}
+                </TableCell>
+                <TableCell className="text-xs">
+                  {new Date(cred.expiresAt).toLocaleString("zh-CN")}
+                </TableCell>
+                <TableCell className="text-right space-x-2">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title={cred.disabled ? "启用" : "禁用"}
+                    onClick={() => toggleStatusMutation.mutate({ index: cred.index, disabled: !cred.disabled })}
+                    disabled={toggleStatusMutation.isPending}
+                  >
+                    {cred.disabled ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="重置失败计数"
+                    onClick={() => resetMutation.mutate(cred.index)}
+                    disabled={resetMutation.isPending}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-destructive"
+                    title="删除"
+                    onClick={() => {
+                      if (confirm("确定要删除此凭据吗？")) {
+                        deleteMutation.mutate(cred.index);
+                      }
+                    }}
+                    disabled={deleteMutation.isPending}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+    let color = "bg-gray-500";
+    let text = status;
+
+    if (status === "Active") {
+      color = "bg-green-500";
+      text = "活跃";
+    }
+    if (status === "Cooldown") {
+      color = "bg-yellow-500";
+      text = "冷却中";
+    }
+    if (status === "RateLimited") {
+      color = "bg-orange-500";
+      text = "被限流";
+    }
+    if (status === "Expired") {
+      color = "bg-red-500";
+      text = "已过期";
+    }
+    if (status === "Disabled") {
+      color = "bg-gray-500";
+      text = "已禁用";
+    }
+    
+    return (
+        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium text-white ${color}`}>
+            {text}
+        </span>
+    )
+}

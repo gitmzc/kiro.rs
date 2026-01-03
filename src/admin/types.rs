@@ -234,3 +234,69 @@ impl AdminErrorResponse {
         Self::new("internal_error", message)
     }
 }
+
+// ============ 健康检查 ============
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthResponse {
+    pub status: String,
+    pub db: String,
+    pub now: String,
+    pub uptime_seconds: u64,
+}
+
+// ============ API Key 管理 ============
+
+/// API Key 列表响应
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiKeysResponse {
+    pub api_keys: Vec<ApiKeyItem>,
+}
+
+/// API Key 列表项
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiKeyItem {
+    pub id: String,
+    pub name: String,
+    pub key_preview: String,  // 只显示前8位和后4位
+    pub enabled: bool,
+    pub created_at: i64,
+}
+
+/// 创建 API Key 请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateApiKeyRequest {
+    pub name: String,
+}
+
+/// 创建 API Key 响应
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateApiKeyResponse {
+    pub id: String,
+    pub key: String,  // 完整的 key，只在创建时返回一次
+    pub name: String,
+    pub created_at: i64,
+}
+
+/// 更新 API Key 请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateApiKeyRequest {
+    pub name: Option<String>,
+    pub enabled: Option<bool>,
+}
+
+// ============ 密码管理 ============
+
+/// 修改密码请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangePasswordRequest {
+    pub old_password: String,
+    pub new_password: String,
+}

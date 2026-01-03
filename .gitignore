@@ -6,3 +6,7 @@
 /.idea
 /test.json
 /Cargo.lock
+/auths
+/data
+/logs
+kiro.pid

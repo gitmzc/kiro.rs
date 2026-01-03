@@ -2,5 +2,11 @@
   "host": "127.0.0.1",
   "port": 8990,
   "apiKey": "sk-kiro-rs-qazWSXedcRFV123456",
-  "region": "us-east-1"
+  "region": "us-east-1",
+  "thinkingBudgetTokens": 20000,
+  "modelMapping": {
+    "sonnet": "claude-sonnet-4.5",
+    "opus": "claude-opus-4.5",
+    "haiku": "claude-haiku-4.5"
+  }
 }

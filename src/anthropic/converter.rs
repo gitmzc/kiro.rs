@@ -11,6 +11,7 @@ use crate::kiro::model::requests::conversation::{
 use crate::kiro::model::requests::tool::{InputSchema, Tool, ToolResult, ToolSpecification, ToolUseEntry};
 
 use super::types::{ContentBlock, MessagesRequest, Thinking};
+use crate::runtime_config;
 
 /// 模型映射：将 Anthropic 模型名映射到 Kiro 模型 ID
 ///
@@ -20,6 +21,15 @@ use super::types::{ContentBlock, MessagesRequest, Thinking};
 /// - 所有 haiku → claude-haiku-4.5
 pub fn map_model(model: &str) -> Option<String> {
     let model_lower = model.to_lowercase();
+    let mapping = runtime_config::model_mapping();
+
+    if !mapping.is_empty() {
+        for (key, target) in mapping {
+            if model_lower.contains(&key.to_lowercase()) {
+                return Some(target);
+            }
+        }
+    }
 
     if model_lower.contains("sonnet") {
         Some("claude-sonnet-4.5".to_string())

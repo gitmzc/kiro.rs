@@ -21,8 +21,16 @@ mod handlers;
 mod middleware;
 mod router;
 mod service;
+mod stats;
+mod config;
+mod logs;
 pub mod types;
 
 pub use middleware::AdminState;
 pub use router::create_admin_router;
 pub use service::AdminService;
+pub use stats::StatsService;
+pub use stats::middleware::StatsRecorder;
+pub use stats::middleware::stats_middleware;
+pub use config::ConfigManager;
+pub use logs::LogBroadcaster;

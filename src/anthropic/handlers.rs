@@ -4,7 +4,7 @@ use std::convert::Infallible;
 
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Extension, State},
     http::{header, StatusCode},
     response::{IntoResponse, Json, Response},
     Json as JsonExtractor,
@@ -19,6 +19,7 @@ use crate::token;
 use crate::kiro::model::events::Event;
 use crate::kiro::model::requests::kiro::KiroRequest;
 use crate::kiro::parser::decoder::EventStreamDecoder;
+use crate::admin::StatsRecorder;
 
 use super::converter::{convert_request, ConversionError};
 use super::middleware::AppState;
@@ -74,6 +75,7 @@ pub async fn get_models() -> impl IntoResponse {
 /// 创建消息（对话）
 pub async fn post_messages(
     State(state): State<AppState>,
+    Extension(recorder): Extension<StatsRecorder>,
     JsonExtractor(payload): JsonExtractor<MessagesRequest>,
 ) -> Response {
     tracing::info!(
@@ -154,10 +156,18 @@ pub async fn post_messages(
 
     if payload.stream {
         // 流式响应
-        handle_stream_request(provider, &request_body, &payload.model, input_tokens, thinking_enabled).await
+        handle_stream_request(
+            provider,
+            &request_body,
+            &payload.model,
+            input_tokens,
+            thinking_enabled,
+            recorder,
+        )
+        .await
     } else {
         // 非流式响应
-        handle_non_stream_request(provider, &request_body, &payload.model, input_tokens).await
+        handle_non_stream_request(provider, &request_body, &payload.model, input_tokens, recorder).await
     }
 }
 
@@ -168,12 +178,15 @@ async fn handle_stream_request(
     model: &str,
     input_tokens: i32,
     thinking_enabled: bool,
+    recorder: StatsRecorder,
 ) -> Response {
     // 调用 Kiro API（支持多凭据故障转移）
     let response = match provider.call_api_stream(request_body).await {
         Ok(resp) => resp,
         Err(e) => {
             tracing::error!("Kiro API 调用失败: {}", e);
+            recorder.record_tokens(input_tokens, 0, Some(model.to_string()), false);
+            recorder.complete().await;
             return (
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorResponse::new(
@@ -192,7 +205,8 @@ async fn handle_stream_request(
     let initial_events = ctx.generate_initial_events();
 
     // 创建 SSE 流
-    let stream = create_sse_stream(response, ctx, initial_events);
+    recorder.record_tokens(input_tokens, 0, Some(model.to_string()), true);
+    let stream = create_sse_stream(response, ctx, initial_events, recorder);
 
     // 返回 SSE 响应
     Response::builder()
@@ -217,6 +231,7 @@ fn create_sse_stream(
     response: reqwest::Response,
     ctx: StreamContext,
     initial_events: Vec<SseEvent>,
+    recorder: StatsRecorder,
 ) -> impl Stream<Item = Result<Bytes, Infallible>> {
     // 先发送初始事件
     let initial_stream = stream::iter(
@@ -229,8 +244,8 @@ fn create_sse_stream(
     let body_stream = response.bytes_stream();
 
     let processing_stream = stream::unfold(
-        (body_stream, ctx, EventStreamDecoder::new(), false, interval(Duration::from_secs(PING_INTERVAL_SECS))),
-        |(mut body_stream, mut ctx, mut decoder, finished, mut ping_interval)| async move {
+        (body_stream, ctx, EventStreamDecoder::new(), false, interval(Duration::from_secs(PING_INTERVAL_SECS)), recorder),
+        |(mut body_stream, mut ctx, mut decoder, finished, mut ping_interval, recorder)| async move {
             if finished {
                 return None;
             }
@@ -267,26 +282,32 @@ fn create_sse_stream(
                                 .map(|e| Ok(Bytes::from(e.to_sse_string())))
                                 .collect();
 
-                            Some((stream::iter(bytes), (body_stream, ctx, decoder, false, ping_interval)))
+                            Some((stream::iter(bytes), (body_stream, ctx, decoder, false, ping_interval, recorder)))
                         }
                         Some(Err(e)) => {
                             tracing::error!("读取响应流失败: {}", e);
                             // 发送最终事件并结束
                             let final_events = ctx.generate_final_events();
+                            let final_input = ctx.context_input_tokens.unwrap_or(ctx.input_tokens);
+                            recorder.record_tokens(final_input, ctx.output_tokens, Some(ctx.model.clone()), true);
+                            recorder.complete().await;
                             let bytes: Vec<Result<Bytes, Infallible>> = final_events
                                 .into_iter()
                                 .map(|e| Ok(Bytes::from(e.to_sse_string())))
                                 .collect();
-                            Some((stream::iter(bytes), (body_stream, ctx, decoder, true, ping_interval)))
+                            Some((stream::iter(bytes), (body_stream, ctx, decoder, true, ping_interval, recorder)))
                         }
                         None => {
                             // 流结束，发送最终事件
                             let final_events = ctx.generate_final_events();
+                            let final_input = ctx.context_input_tokens.unwrap_or(ctx.input_tokens);
+                            recorder.record_tokens(final_input, ctx.output_tokens, Some(ctx.model.clone()), true);
+                            recorder.complete().await;
                             let bytes: Vec<Result<Bytes, Infallible>> = final_events
                                 .into_iter()
                                 .map(|e| Ok(Bytes::from(e.to_sse_string())))
                                 .collect();
-                            Some((stream::iter(bytes), (body_stream, ctx, decoder, true, ping_interval)))
+                            Some((stream::iter(bytes), (body_stream, ctx, decoder, true, ping_interval, recorder)))
                         }
                     }
                 }
@@ -294,7 +315,7 @@ fn create_sse_stream(
                 _ = ping_interval.tick() => {
                     tracing::trace!("发送 ping 保活事件");
                     let bytes: Vec<Result<Bytes, Infallible>> = vec![Ok(create_ping_sse())];
-                    Some((stream::iter(bytes), (body_stream, ctx, decoder, false, ping_interval)))
+                    Some((stream::iter(bytes), (body_stream, ctx, decoder, false, ping_interval, recorder)))
                 }
             }
         },
@@ -313,12 +334,14 @@ async fn handle_non_stream_request(
     request_body: &str,
     model: &str,
     input_tokens: i32,
+    recorder: StatsRecorder,
 ) -> Response {
     // 调用 Kiro API（支持多凭据故障转移）
     let response = match provider.call_api(request_body).await {
         Ok(resp) => resp,
         Err(e) => {
             tracing::error!("Kiro API 调用失败: {}", e);
+            recorder.record_tokens(input_tokens, 0, Some(model.to_string()), false);
             return (
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorResponse::new(
@@ -335,6 +358,7 @@ async fn handle_non_stream_request(
         Ok(bytes) => bytes,
         Err(e) => {
             tracing::error!("读取响应体失败: {}", e);
+            recorder.record_tokens(input_tokens, 0, Some(model.to_string()), false);
             return (
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorResponse::new(
@@ -446,6 +470,7 @@ async fn handle_non_stream_request(
 
     // 使用从 contextUsageEvent 计算的 input_tokens，如果没有则使用估算值
     let final_input_tokens = context_input_tokens.unwrap_or(input_tokens);
+    recorder.record_tokens(final_input_tokens, output_tokens, Some(model.to_string()), false);
 
     // 构建 Anthropic 响应
     let response_body = json!({

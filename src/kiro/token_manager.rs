@@ -743,9 +743,15 @@ impl MultiTokenManager {
             entries.iter().map(|e| e.credentials.clone()).collect()
         };
 
-        // 序列化为 pretty JSON
-        let json =
-            serde_json::to_string_pretty(&credentials).context("序列化凭据失败")?;
+        // 如果只有一个凭据且原本是单凭据格式，保持单凭据格式
+        // 如果有多个凭据，强制使用数组格式（即使 is_multiple_format 为 false）
+        let json = if credentials.len() == 1 && !self.is_multiple_format {
+            // 单凭据格式
+            serde_json::to_string_pretty(&credentials[0]).context("序列化凭据失败")?
+        } else {
+            // 多凭据数组格式
+            serde_json::to_string_pretty(&credentials).context("序列化凭据失败")?
+        };
 
         // 写入文件
         std::fs::write(path, &json)
@@ -1049,6 +1055,42 @@ impl MultiTokenManager {
         };
 
         get_usage_limits(&credentials, &self.config, &token, self.proxy.as_ref()).await
+    }
+
+    /// 检查凭据余额并在用完时自动禁用
+    ///
+    /// 返回 (是否已禁用, 剩余额度)
+    pub async fn check_and_disable_if_exhausted(&self, index: usize) -> anyhow::Result<(bool, f64)> {
+        let usage = self.get_usage_limits_for(index).await?;
+        let current = usage.current_usage();
+        let limit = usage.usage_limit();
+        let remaining = (limit - current).max(0.0);
+
+        // 如果余额用完（剩余 <= 0），自动禁用
+        if remaining <= 0.0 {
+            let was_disabled = {
+                let entries = self.entries.lock();
+                entries.get(index).map(|e| e.disabled).unwrap_or(true)
+            };
+
+            if !was_disabled {
+                self.set_disabled(index, true)?;
+                tracing::warn!(
+                    "凭据 #{} 余额已用完 ({:.0}/{:.0})，已自动禁用",
+                    index, current, limit
+                );
+
+                // 如果禁用的是当前凭据，切换到下一个
+                let current_index = *self.current_index.lock();
+                if index == current_index {
+                    self.switch_to_next();
+                }
+
+                return Ok((true, remaining));
+            }
+        }
+
+        Ok((false, remaining))
     }
 }
 

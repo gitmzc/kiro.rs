@@ -30,3 +30,8 @@ clap = { version = "4.5", features = ["derive"] }
 urlencoding = "2"
 parking_lot = "0.12"  # 高性能同步原语
 subtle = "2.6"        # 常量时间比较（防止时序攻击）
+tokio-rusqlite = "0.6"  # 异步 SQLite
+rusqlite = { version = "0.32", features = ["bundled"] }
+rust-embed = "8.5"    # 嵌入静态文件
+mime_guess = "2.0"    # MIME 类型推断
+tracing-appender = "0.2"  # 日志轮转
