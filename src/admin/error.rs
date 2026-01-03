@@ -9,6 +9,9 @@ use super::types::AdminErrorResponse;
 /// Admin 服务错误类型
 #[derive(Debug)]
 pub enum AdminServiceError {
+    /// 请求参数无效
+    InvalidRequest(String),
+
     /// 凭据不存在
     NotFound { id: u64 },
 
@@ -22,6 +25,7 @@ pub enum AdminServiceError {
 impl fmt::Display for AdminServiceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AdminServiceError::InvalidRequest(msg) => write!(f, "请求无效: {}", msg),
             AdminServiceError::NotFound { id } => {
                 write!(f, "凭据不存在: {}", id)
             }
@@ -37,6 +41,7 @@ impl AdminServiceError {
     /// 获取对应的 HTTP 状态码
     pub fn status_code(&self) -> StatusCode {
         match self {
+            AdminServiceError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
             AdminServiceError::NotFound { .. } => StatusCode::NOT_FOUND,
             AdminServiceError::UpstreamError(_) => StatusCode::BAD_GATEWAY,
             AdminServiceError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -46,6 +51,7 @@ impl AdminServiceError {
     /// 转换为 API 错误响应
     pub fn into_response(self) -> AdminErrorResponse {
         match &self {
+            AdminServiceError::InvalidRequest(_) => AdminErrorResponse::invalid_request(self.to_string()),
             AdminServiceError::NotFound { .. } => AdminErrorResponse::not_found(self.to_string()),
             AdminServiceError::UpstreamError(_) => AdminErrorResponse::api_error(self.to_string()),
             AdminServiceError::InternalError(_) => {
