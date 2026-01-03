@@ -983,17 +983,22 @@ impl MultiTokenManager {
             if entries.len() == 1 {
                 anyhow::bail!("无法删除最后一个凭据");
             }
+
+            // 如果删除的是当前凭据，需要切换到下一个
+            let deleted_id = entries[index].id;
+            let current_id = *self.current_id.lock();
+
             entries.remove(index);
 
-            // 调整当前索引
-            let mut current_index = self.current_index.lock();
-            if *current_index >= entries.len() {
-                *current_index = 0;
-            } else if *current_index > index {
-                *current_index -= 1;
+            // 如果删除的是当前凭据，切换到下一个
+            if deleted_id == current_id {
+                drop(entries); // 释放锁
+                self.switch_to_next();
+                let entries = self.entries.lock();
+                entries.len()
+            } else {
+                entries.len()
             }
-
-            entries.len()
         };
         // 持久化更改
         self.persist_credentials();
