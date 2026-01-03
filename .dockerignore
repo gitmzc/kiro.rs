@@ -1,6 +1,5 @@
 # Rust 构建产物
 target/
-Cargo.lock
 
 # 配置和凭据文件（构建时不需要）
 config.json
