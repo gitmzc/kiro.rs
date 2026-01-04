@@ -19,8 +19,8 @@ export function CredentialsList() {
   });
 
   const toggleStatusMutation = useMutation({
-    mutationFn: ({ index, disabled }: { index: number; disabled: boolean }) =>
-      apiClient.post<SuccessResponse>(`/credentials/${index}/disabled`, { disabled }),
+    mutationFn: ({ id, disabled }: { id: number; disabled: boolean }) =>
+      apiClient.post<SuccessResponse>(`/credentials/${id}/disabled`, { disabled }),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['credentials'] });
       toast.success(variables.disabled ? "凭据已禁用" : "凭据已启用");
@@ -31,8 +31,8 @@ export function CredentialsList() {
   });
 
   const resetMutation = useMutation({
-    mutationFn: (index: number) =>
-      apiClient.post<SuccessResponse>(`/credentials/${index}/reset`, {}),
+    mutationFn: (id: number) =>
+      apiClient.post<SuccessResponse>(`/credentials/${id}/reset`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['credentials'] });
       toast.success("失败计数已重置");
@@ -43,8 +43,8 @@ export function CredentialsList() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (index: number) =>
-      apiClient.delete<SuccessResponse>(`/credentials/${index}`),
+    mutationFn: (id: number) =>
+      apiClient.delete<SuccessResponse>(`/credentials/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['credentials'] });
       toast.success("凭据已删除");
@@ -165,7 +165,7 @@ export function CredentialsList() {
                     variant="ghost"
                     size="icon"
                     title={cred.disabled ? "启用" : "禁用"}
-                    onClick={() => toggleStatusMutation.mutate({ index: cred.index, disabled: !cred.disabled })}
+                    onClick={() => toggleStatusMutation.mutate({ id: cred.id, disabled: !cred.disabled })}
                     disabled={toggleStatusMutation.isPending}
                   >
                     {cred.disabled ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
@@ -174,7 +174,7 @@ export function CredentialsList() {
                     variant="ghost"
                     size="icon"
                     title="重置失败计数"
-                    onClick={() => resetMutation.mutate(cred.index)}
+                    onClick={() => resetMutation.mutate(cred.id)}
                     disabled={resetMutation.isPending}
                   >
                     <RefreshCw className="h-4 w-4" />
@@ -186,7 +186,7 @@ export function CredentialsList() {
                     title="删除"
                     onClick={() => {
                       if (confirm("确定要删除此凭据吗？")) {
-                        deleteMutation.mutate(cred.index);
+                        deleteMutation.mutate(cred.id);
                       }
                     }}
                     disabled={deleteMutation.isPending}
