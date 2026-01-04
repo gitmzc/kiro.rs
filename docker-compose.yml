@@ -8,12 +8,12 @@ services:
     container_name: kiro-rs
     restart: unless-stopped
     ports:
-      - "8990:8990"
+      - "38990:8990"
     volumes:
       # 配置文件（必需）
       - ./config.json:/app/config.json:ro
       # 凭据文件（必需）
-      - ./credentials.json:/app/credentials.json:ro
+      - ./credentials.json:/app/credentials.json
       # 数据持久化目录（可选）
       - ./data:/app/data
       # 日志目录（可选）
