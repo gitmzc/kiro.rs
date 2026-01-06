@@ -227,4 +227,51 @@ impl AdminService {
             AdminServiceError::InternalError(msg)
         }
     }
+
+    /// 批量设置禁用状态
+    pub fn batch_set_disabled(&self, ids: &[u64], disabled: bool) -> (usize, usize) {
+        let mut succeeded = 0;
+        let mut failed = 0;
+        let snapshot = self.token_manager.snapshot();
+        let current_id = snapshot.current_id;
+
+        for &id in ids {
+            match self.token_manager.set_disabled(id, disabled) {
+                Ok(_) => {
+                    succeeded += 1;
+                    if disabled && id == current_id {
+                        let _ = self.token_manager.switch_to_next();
+                    }
+                }
+                Err(_) => failed += 1,
+            }
+        }
+        (succeeded, failed)
+    }
+
+    /// 批量重置失败计数
+    pub fn batch_reset(&self, ids: &[u64]) -> (usize, usize) {
+        let mut succeeded = 0;
+        let mut failed = 0;
+        for &id in ids {
+            match self.token_manager.reset_and_enable(id) {
+                Ok(_) => succeeded += 1,
+                Err(_) => failed += 1,
+            }
+        }
+        (succeeded, failed)
+    }
+
+    /// 批量删除凭据
+    pub fn batch_delete(&self, ids: &[u64]) -> (usize, usize) {
+        let mut succeeded = 0;
+        let mut failed = 0;
+        for &id in ids {
+            match self.token_manager.remove_credential_by_id(id) {
+                Ok(_) => succeeded += 1,
+                Err(_) => failed += 1,
+            }
+        }
+        (succeeded, failed)
+    }
 }

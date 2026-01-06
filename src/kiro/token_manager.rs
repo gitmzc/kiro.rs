@@ -375,6 +375,8 @@ struct CredentialEntry {
     failure_count: u32,
     /// 是否已禁用
     disabled: bool,
+    /// 是否已检查过余额（首次使用前检查）
+    balance_checked: bool,
 }
 
 // ============================================================================
@@ -489,6 +491,7 @@ impl MultiTokenManager {
                     credentials: cred,
                     failure_count: 0,
                     disabled: false,
+                    balance_checked: false,
                 }
             })
             .collect();
@@ -556,6 +559,7 @@ impl MultiTokenManager {
     ///
     /// 如果 Token 过期或即将过期，会自动刷新
     /// Token 刷新失败时会尝试下一个可用凭据（不计入失败次数）
+    /// 首次使用凭据时会检查余额，余额不足则自动禁用并切换
     pub async fn acquire_context(&self) -> anyhow::Result<CallContext> {
         let total = self.total_count();
         let mut tried_count = 0;
@@ -569,13 +573,13 @@ impl MultiTokenManager {
                 );
             }
 
-            let (id, credentials) = {
+            let (id, credentials, need_balance_check) = {
                 let entries = self.entries.lock();
                 let current_id = *self.current_id.lock();
 
                 // 找到当前凭据
                 if let Some(entry) = entries.iter().find(|e| e.id == current_id && !e.disabled) {
-                    (entry.id, entry.credentials.clone())
+                    (entry.id, entry.credentials.clone(), !entry.balance_checked)
                 } else {
                     // 当前凭据不可用，选择优先级最高的可用凭据
                     if let Some(entry) = entries
@@ -586,11 +590,12 @@ impl MultiTokenManager {
                         // 先提取数据
                         let new_id = entry.id;
                         let new_creds = entry.credentials.clone();
+                        let need_check = !entry.balance_checked;
                         drop(entries);
                         // 更新 current_id
                         let mut current_id = self.current_id.lock();
                         *current_id = new_id;
-                        (new_id, new_creds)
+                        (new_id, new_creds, need_check)
                     } else {
                         anyhow::bail!(
                             "所有凭据均已禁用（{}/{}）",
@@ -604,6 +609,28 @@ impl MultiTokenManager {
             // 尝试获取/刷新 Token
             match self.try_ensure_token(id, &credentials).await {
                 Ok(ctx) => {
+                    // 首次使用凭据时检查余额
+                    if need_balance_check {
+                        match self.check_balance_and_mark(id, &ctx).await {
+                            Ok(true) => {
+                                // 余额充足，返回上下文
+                                return Ok(ctx);
+                            }
+                            Ok(false) => {
+                                // 余额不足，已禁用，尝试下一个
+                                tracing::warn!("凭据 #{} 余额不足，已禁用，尝试下一个凭据", id);
+                                self.switch_to_next_by_priority();
+                                tried_count += 1;
+                                continue;
+                            }
+                            Err(e) => {
+                                // 余额检查失败（网络错误等），标记为已检查，继续使用
+                                tracing::warn!("凭据 #{} 余额检查失败: {}，继续使用", id, e);
+                                self.mark_balance_checked(id);
+                                return Ok(ctx);
+                            }
+                        }
+                    }
                     return Ok(ctx);
                 }
                 Err(e) => {
@@ -618,6 +645,48 @@ impl MultiTokenManager {
                     tried_count += 1;
                 }
             }
+        }
+    }
+
+    /// 检查余额并标记已检查
+    /// 返回 Ok(true) 表示余额充足，Ok(false) 表示余额不足已禁用
+    async fn check_balance_and_mark(&self, id: u64, ctx: &CallContext) -> anyhow::Result<bool> {
+        let usage = get_usage_limits(&ctx.credentials, &self.config, &ctx.token, self.proxy.as_ref()).await?;
+
+        let remaining = usage.usage_limit() - usage.current_usage();
+
+        // 标记为已检查
+        {
+            let mut entries = self.entries.lock();
+            if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                entry.balance_checked = true;
+            }
+        }
+
+        // 余额不足（小于等于 0）则禁用
+        if remaining <= 0.0 {
+            tracing::warn!(
+                "凭据 #{} 余额不足 (剩余: {:.2}, 限额: {:.2})，自动禁用",
+                id, remaining, usage.usage_limit()
+            );
+            let _ = self.set_disabled(id, true);
+            return Ok(false);
+        }
+
+        tracing::info!(
+            "凭据 #{} 余额检查通过 (剩余: {:.2}/{:.2}, {:.1}%)",
+            id, remaining, usage.usage_limit(),
+            (1.0 - usage.current_usage() / usage.usage_limit()) * 100.0
+        );
+
+        Ok(true)
+    }
+
+    /// 标记凭据余额已检查
+    fn mark_balance_checked(&self, id: u64) {
+        let mut entries = self.entries.lock();
+        if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+            entry.balance_checked = true;
         }
     }
 
@@ -960,6 +1029,7 @@ impl MultiTokenManager {
                 credentials,
                 failure_count: 0,
                 disabled: false,
+                balance_checked: false,
             });
             (index, entries.len())
         };
@@ -1001,6 +1071,33 @@ impl MultiTokenManager {
             }
         };
         // 持久化更改
+        self.persist_credentials();
+        Ok(total)
+    }
+
+    /// 按 ID 删除凭据（Admin API 批量操作）
+    pub fn remove_credential_by_id(&self, id: u64) -> anyhow::Result<usize> {
+        let total = {
+            let mut entries = self.entries.lock();
+            let index = entries.iter().position(|e| e.id == id)
+                .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?;
+
+            if entries.len() == 1 {
+                anyhow::bail!("无法删除最后一个凭据");
+            }
+
+            let current_id = *self.current_id.lock();
+            entries.remove(index);
+
+            if id == current_id {
+                drop(entries);
+                self.switch_to_next();
+                let entries = self.entries.lock();
+                entries.len()
+            } else {
+                entries.len()
+            }
+        };
         self.persist_credentials();
         Ok(total)
     }

@@ -301,3 +301,30 @@ pub struct ChangePasswordRequest {
     pub old_password: String,
     pub new_password: String,
 }
+
+// ============ 批量操作 ============
+
+/// 批量操作请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchIdsRequest {
+    pub ids: Vec<u64>,
+}
+
+/// 批量禁用/启用请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchDisabledRequest {
+    pub ids: Vec<u64>,
+    pub disabled: bool,
+}
+
+/// 批量操作响应
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchResponse {
+    pub success: bool,
+    pub message: String,
+    pub succeeded: usize,
+    pub failed: usize,
+}

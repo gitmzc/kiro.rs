@@ -1,9 +1,10 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Play, Pause, RefreshCw, Trash2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiClient, type CredentialsStatusResponse, type SuccessResponse, type BalanceResponse } from "@/lib/api-client";
+import { apiClient, type CredentialsStatusResponse, type SuccessResponse, type BalanceResponse, type BatchResponse } from "@/lib/api-client";
 import { toast } from "sonner";
 import { useState } from "react";
 
@@ -11,11 +12,12 @@ export function CredentialsList() {
   const queryClient = useQueryClient();
   const [balanceInfo, setBalanceInfo] = useState<Record<number, BalanceResponse | null>>({});
   const [loadingBalance, setLoadingBalance] = useState<Record<number, boolean>>({});
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   const { data: credentials, isLoading } = useQuery({
     queryKey: ['credentials'],
     queryFn: () => apiClient.get<CredentialsStatusResponse>("/credentials"),
-    refetchInterval: 10000, // Refresh every 10s
+    refetchInterval: 10000,
   });
 
   const toggleStatusMutation = useMutation({
@@ -54,13 +56,52 @@ export function CredentialsList() {
     },
   });
 
+  const batchDisabledMutation = useMutation({
+    mutationFn: ({ ids, disabled }: { ids: number[]; disabled: boolean }) =>
+      apiClient.post<BatchResponse>("/credentials/batch/disabled", { ids, disabled }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] });
+      toast.success(data.message);
+      setSelectedIds(new Set());
+    },
+    onError: () => {
+      toast.error("批量操作失败");
+    },
+  });
+
+  const batchResetMutation = useMutation({
+    mutationFn: (ids: number[]) =>
+      apiClient.post<BatchResponse>("/credentials/batch/reset", { ids }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] });
+      toast.success(data.message);
+      setSelectedIds(new Set());
+    },
+    onError: () => {
+      toast.error("批量重置失败");
+    },
+  });
+
+  const batchDeleteMutation = useMutation({
+    mutationFn: (ids: number[]) =>
+      apiClient.post<BatchResponse>("/credentials/batch/delete", { ids }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] });
+      toast.success(data.message);
+      setSelectedIds(new Set());
+    },
+    onError: () => {
+      toast.error("批量删除失败");
+    },
+  });
+
   const fetchBalance = async (id: number) => {
     setLoadingBalance(prev => ({ ...prev, [id]: true }));
     try {
       const balance = await apiClient.get<BalanceResponse>(`/credentials/${id}/balance`);
       setBalanceInfo(prev => ({ ...prev, [id]: balance }));
       toast.success(`余额: ${balance.remaining.toLocaleString()} / ${balance.usageLimit.toLocaleString()} (${(100 - balance.usagePercentage).toFixed(1)}%)`);
-    } catch (error) {
+    } catch {
       toast.error("查询余额失败");
       setBalanceInfo(prev => ({ ...prev, [id]: null }));
     } finally {
@@ -82,6 +123,31 @@ export function CredentialsList() {
     };
     return prefixes[authMethod] || `${authMethod}-***`;
   };
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (!credentials) return;
+    if (selectedIds.size === credentials.credentials.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(credentials.credentials.map(c => c.id)));
+    }
+  };
+
+  const selectedArray = Array.from(selectedIds);
+  const hasSelection = selectedIds.size > 0;
+  const isBatchLoading = batchDisabledMutation.isPending || batchResetMutation.isPending || batchDeleteMutation.isPending;
 
   if (isLoading) {
     return (
@@ -111,14 +177,66 @@ export function CredentialsList() {
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
         <CardTitle>凭据列表 ({credentials.available} / {credentials.total} 可用)</CardTitle>
+        {hasSelection && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">已选 {selectedIds.size} 项</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => batchDisabledMutation.mutate({ ids: selectedArray, disabled: false })}
+              disabled={isBatchLoading}
+            >
+              <Play className="h-4 w-4 mr-1" />
+              批量启用
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => batchDisabledMutation.mutate({ ids: selectedArray, disabled: true })}
+              disabled={isBatchLoading}
+            >
+              <Pause className="h-4 w-4 mr-1" />
+              批量禁用
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => batchResetMutation.mutate(selectedArray)}
+              disabled={isBatchLoading}
+            >
+              <RefreshCw className="h-4 w-4 mr-1" />
+              批量重置
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-destructive"
+              onClick={() => {
+                if (confirm(`确定要删除选中的 ${selectedIds.size} 个凭据吗？`)) {
+                  batchDeleteMutation.mutate(selectedArray);
+                }
+              }}
+              disabled={isBatchLoading}
+            >
+              <Trash2 className="h-4 w-4 mr-1" />
+              批量删除
+            </Button>
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>索引</TableHead>
+              <TableHead className="w-12">
+                <Checkbox
+                  checked={selectedIds.size === credentials.credentials.length && credentials.credentials.length > 0}
+                  onCheckedChange={toggleSelectAll}
+                />
+              </TableHead>
+              <TableHead>ID</TableHead>
               <TableHead>优先级</TableHead>
               <TableHead>类型</TableHead>
               <TableHead>Key</TableHead>
@@ -132,7 +250,13 @@ export function CredentialsList() {
           <TableBody>
             {credentials.credentials.map((cred) => (
               <TableRow key={cred.id}>
-                <TableCell>{cred.index}</TableCell>
+                <TableCell>
+                  <Checkbox
+                    checked={selectedIds.has(cred.id)}
+                    onCheckedChange={() => toggleSelect(cred.id)}
+                  />
+                </TableCell>
+                <TableCell>{cred.id}</TableCell>
                 <TableCell>{cred.priority}</TableCell>
                 <TableCell>{cred.authMethod}</TableCell>
                 <TableCell className="font-mono text-xs">{maskKey(cred.authMethod)}</TableCell>
@@ -158,7 +282,7 @@ export function CredentialsList() {
                   )}
                 </TableCell>
                 <TableCell className="text-xs">
-                  {new Date(cred.expiresAt).toLocaleString("zh-CN")}
+                  {cred.expiresAt ? new Date(cred.expiresAt).toLocaleString("zh-CN") : "-"}
                 </TableCell>
                 <TableCell className="text-right space-x-2">
                   <Button
@@ -227,7 +351,11 @@ function StatusBadge({ status }: { status: string }) {
       color = "bg-gray-500";
       text = "已禁用";
     }
-    
+    if (status === "Standby") {
+      color = "bg-blue-500";
+      text = "待命";
+    }
+
     return (
         <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium text-white ${color}`}>
             {text}

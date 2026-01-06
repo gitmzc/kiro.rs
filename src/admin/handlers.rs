@@ -17,6 +17,7 @@ use super::{
         SetDisabledRequest, SetPriorityRequest, SuccessResponse, UploadedCredential,
         ApiKeysResponse, ApiKeyItem, CreateApiKeyRequest, CreateApiKeyResponse,
         UpdateApiKeyRequest, ChangePasswordRequest,
+        BatchIdsRequest, BatchDisabledRequest, BatchResponse,
     },
 };
 use super::types::HealthResponse;
@@ -457,4 +458,79 @@ fn mask_api_key(key: &str) -> String {
     let prefix = &key[..8];
     let suffix = &key[key.len() - 4..];
     format!("{}...{}", prefix, suffix)
+}
+
+// ============ 批量操作 ============
+
+/// POST /api/admin/credentials/batch/disabled
+/// 批量启用/禁用凭据
+pub async fn batch_set_disabled(
+    State(state): State<AdminState>,
+    Json(payload): Json<BatchDisabledRequest>,
+) -> impl IntoResponse {
+    if payload.ids.is_empty() {
+        return Json(BatchResponse {
+            success: false,
+            message: "未选择任何凭据".to_string(),
+            succeeded: 0,
+            failed: 0,
+        }).into_response();
+    }
+
+    let (succeeded, failed) = state.service.batch_set_disabled(&payload.ids, payload.disabled);
+    let action = if payload.disabled { "禁用" } else { "启用" };
+    Json(BatchResponse {
+        success: failed == 0,
+        message: format!("批量{}: {} 成功, {} 失败", action, succeeded, failed),
+        succeeded,
+        failed,
+    }).into_response()
+}
+
+/// POST /api/admin/credentials/batch/reset
+/// 批量重置失败计数
+pub async fn batch_reset(
+    State(state): State<AdminState>,
+    Json(payload): Json<BatchIdsRequest>,
+) -> impl IntoResponse {
+    if payload.ids.is_empty() {
+        return Json(BatchResponse {
+            success: false,
+            message: "未选择任何凭据".to_string(),
+            succeeded: 0,
+            failed: 0,
+        }).into_response();
+    }
+
+    let (succeeded, failed) = state.service.batch_reset(&payload.ids);
+    Json(BatchResponse {
+        success: failed == 0,
+        message: format!("批量重置: {} 成功, {} 失败", succeeded, failed),
+        succeeded,
+        failed,
+    }).into_response()
+}
+
+/// POST /api/admin/credentials/batch/delete
+/// 批量删除凭据
+pub async fn batch_delete(
+    State(state): State<AdminState>,
+    Json(payload): Json<BatchIdsRequest>,
+) -> impl IntoResponse {
+    if payload.ids.is_empty() {
+        return Json(BatchResponse {
+            success: false,
+            message: "未选择任何凭据".to_string(),
+            succeeded: 0,
+            failed: 0,
+        }).into_response();
+    }
+
+    let (succeeded, failed) = state.service.batch_delete(&payload.ids);
+    Json(BatchResponse {
+        success: failed == 0,
+        message: format!("批量删除: {} 成功, {} 失败", succeeded, failed),
+        succeeded,
+        failed,
+    }).into_response()
 }

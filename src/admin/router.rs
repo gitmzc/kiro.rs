@@ -14,6 +14,7 @@ use super::{
         get_stats_summary, get_stats_timeseries, get_stats_requests, get_admin_health,
         stream_logs, get_config, update_config,
         get_api_keys, create_api_key, update_api_key, delete_api_key, change_password,
+        batch_set_disabled, batch_reset, batch_delete,
     },
     middleware::{admin_auth_middleware, rate_limit_middleware, AdminState},
 };
@@ -28,6 +29,9 @@ use super::{
 /// - `POST /credentials/:id/reset` - 重置失败计数
 /// - `GET /credentials/:id/balance` - 获取凭据余额
 /// - `DELETE /credentials/:id` - 删除凭据
+/// - `POST /credentials/batch/disabled` - 批量启用/禁用
+/// - `POST /credentials/batch/reset` - 批量重置
+/// - `POST /credentials/batch/delete` - 批量删除
 ///
 /// # 认证
 /// 需要 Admin API Key 认证，支持：
@@ -37,6 +41,9 @@ pub fn create_admin_router(state: AdminState) -> Router {
     Router::new()
         .route("/credentials", get(get_all_credentials))
         .route("/credentials/upload", post(upload_credential))
+        .route("/credentials/batch/disabled", post(batch_set_disabled))
+        .route("/credentials/batch/reset", post(batch_reset))
+        .route("/credentials/batch/delete", post(batch_delete))
         .route("/credentials/{id}/disabled", post(set_credential_disabled))
         .route("/credentials/{id}/priority", post(set_credential_priority))
         .route("/credentials/{id}/reset", post(reset_failure_count))

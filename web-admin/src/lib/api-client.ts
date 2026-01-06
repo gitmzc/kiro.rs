@@ -290,3 +290,19 @@ export interface ChangePasswordRequest {
   oldPassword: string;
   newPassword: string;
 }
+
+export interface BatchIdsRequest {
+  ids: number[];
+}
+
+export interface BatchDisabledRequest {
+  ids: number[];
+  disabled: boolean;
+}
+
+export interface BatchResponse {
+  success: boolean;
+  message: string;
+  succeeded: number;
+  failed: number;
+}
