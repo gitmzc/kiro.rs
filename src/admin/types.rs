@@ -77,6 +77,8 @@ impl UploadedCredential {
             client_id: self.client_id,
             client_secret: self.client_secret,
             priority,
+            disabled: false,
+            balance_checked: false,
         })
     }
 }

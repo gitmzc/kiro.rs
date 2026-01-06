@@ -486,12 +486,15 @@ impl MultiTokenManager {
                     cred.id = Some(id);
                     id
                 });
+                // 从凭据中读取持久化的状态
+                let disabled = cred.disabled;
+                let balance_checked = cred.balance_checked;
                 CredentialEntry {
                     id,
                     credentials: cred,
                     failure_count: 0,
-                    disabled: false,
-                    balance_checked: false,
+                    disabled,
+                    balance_checked,
                 }
             })
             .collect();
@@ -508,10 +511,12 @@ impl MultiTokenManager {
             anyhow::bail!("检测到重复的凭据 ID: {:?}", duplicate_ids);
         }
 
-        // 选择初始凭据：优先级最高（priority 最小）的凭据
+        // 选择初始凭据：优先级最高（priority 最小）且未禁用的凭据
         let initial_id = entries
             .iter()
+            .filter(|e| !e.disabled)
             .min_by_key(|e| e.credentials.priority)
+            .or_else(|| entries.first()) // 如果全部禁用，选第一个
             .map(|e| e.id)
             .unwrap(); // 前面已检查 non-empty
 
@@ -665,13 +670,14 @@ impl MultiTokenManager {
 
         let remaining = usage.usage_limit() - usage.current_usage();
 
-        // 标记为已检查
+        // 标记为已检查并持久化
         {
             let mut entries = self.entries.lock();
             if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
                 entry.balance_checked = true;
             }
         }
+        let _ = self.persist_credentials();
 
         // 余额不足（小于等于 0）则禁用
         if remaining <= 0.0 {
@@ -694,10 +700,14 @@ impl MultiTokenManager {
 
     /// 标记凭据余额已检查
     fn mark_balance_checked(&self, id: u64) {
-        let mut entries = self.entries.lock();
-        if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
-            entry.balance_checked = true;
+        {
+            let mut entries = self.entries.lock();
+            if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                entry.balance_checked = true;
+            }
         }
+        // 持久化更改
+        let _ = self.persist_credentials();
     }
 
     /// 切换到下一个优先级最高的可用凭据（内部方法）
@@ -816,10 +826,15 @@ impl MultiTokenManager {
             None => return Ok(false),
         };
 
-        // 收集所有凭据
+        // 收集所有凭据，同步 disabled 和 balance_checked 状态
         let credentials: Vec<KiroCredentials> = {
             let entries = self.entries.lock();
-            entries.iter().map(|e| e.credentials.clone()).collect()
+            entries.iter().map(|e| {
+                let mut cred = e.credentials.clone();
+                cred.disabled = e.disabled;
+                cred.balance_checked = e.balance_checked;
+                cred
+            }).collect()
         };
 
         // 如果只有一个凭据且原本是单凭据格式，保持单凭据格式

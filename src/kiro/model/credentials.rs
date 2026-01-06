@@ -47,11 +47,26 @@ pub struct KiroCredentials {
     #[serde(default)]
     #[serde(skip_serializing_if = "is_zero")]
     pub priority: u32,
+
+    /// 是否已禁用
+    #[serde(default)]
+    #[serde(skip_serializing_if = "is_false")]
+    pub disabled: bool,
+
+    /// 是否已检查过余额
+    #[serde(default)]
+    #[serde(skip_serializing_if = "is_false")]
+    pub balance_checked: bool,
 }
 
 /// 判断是否为零（用于跳过序列化）
 fn is_zero(value: &u32) -> bool {
     *value == 0
+}
+
+/// 判断是否为 false（用于跳过序列化）
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// 凭据配置（支持单对象或数组格式）
