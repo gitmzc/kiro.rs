@@ -624,8 +624,18 @@ impl MultiTokenManager {
                                 continue;
                             }
                             Err(e) => {
-                                // 余额检查失败（网络错误等），标记为已检查，继续使用
-                                tracing::warn!("凭据 #{} 余额检查失败: {}，继续使用", id, e);
+                                let err_msg = e.to_string();
+                                // 403 错误（账号被暂停等）直接禁用
+                                if err_msg.contains("403") || err_msg.contains("SUSPENDED") || err_msg.contains("权限不足") {
+                                    tracing::warn!("凭据 #{} 余额检查返回 403，自动禁用: {}", id, err_msg);
+                                    self.mark_balance_checked(id);
+                                    let _ = self.set_disabled(id, true);
+                                    self.switch_to_next_by_priority();
+                                    tried_count += 1;
+                                    continue;
+                                }
+                                // 其他错误（网络错误等），标记为已检查，继续使用
+                                tracing::warn!("凭据 #{} 余额检查失败: {}，继续使用", id, err_msg);
                                 self.mark_balance_checked(id);
                                 return Ok(ctx);
                             }
