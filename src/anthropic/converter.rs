@@ -67,6 +67,26 @@ impl std::fmt::Display for ConversionError {
 
 impl std::error::Error for ConversionError {}
 
+/// 从 metadata.user_id 中提取 session UUID
+///
+/// user_id 格式: user_xxx_account__session_0b4445e1-f5be-49e1-87ce-62bbc28ad705
+/// 提取 session_ 后面的 UUID 作为 conversationId
+fn extract_session_id(user_id: &str) -> Option<String> {
+    // 查找 "session_" 后面的内容
+    if let Some(pos) = user_id.find("session_") {
+        let session_part = &user_id[pos + 8..]; // "session_" 长度为 8
+        // session_part 应该是 UUID 格式: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+        // 验证是否是有效的 UUID 格式（36 字符，包含 4 个连字符）
+        if session_part.len() >= 36 {
+            let uuid_str = &session_part[..36];
+            // 简单验证 UUID 格式
+            if uuid_str.chars().filter(|c| *c == '-').count() == 4 {
+                return Some(uuid_str.to_string());
+            }
+        }
+    }
+    None
+}
 
 /// 收集历史消息中使用的所有工具名称
 fn collect_history_tool_names(history: &[Message]) -> Vec<String> {
@@ -105,7 +125,6 @@ fn create_placeholder_tool(name: &str) -> Tool {
     }
 }
 
-
 /// 将 Anthropic 请求转换为 Kiro 请求
 pub fn convert_request(req: &MessagesRequest) -> Result<ConversionResult, ConversionError> {
     // 1. 映射模型
@@ -118,7 +137,13 @@ pub fn convert_request(req: &MessagesRequest) -> Result<ConversionResult, Conver
     }
 
     // 3. 生成会话 ID 和代理 ID
-    let conversation_id = Uuid::new_v4().to_string();
+    // 优先从 metadata.user_id 中提取 session UUID 作为 conversationId
+    let conversation_id = req
+        .metadata
+        .as_ref()
+        .and_then(|m| m.user_id.as_ref())
+        .and_then(|user_id| extract_session_id(user_id))
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let agent_continuation_id = Uuid::new_v4().to_string();
 
     // 4. 确定触发类型
@@ -652,6 +677,7 @@ mod tests {
             tools: None,
             tool_choice: None,
             thinking: None,
+            metadata: None,
         };
         assert_eq!(determine_chat_trigger_type(&req), "MANUAL");
     }
@@ -737,6 +763,7 @@ mod tests {
             tools: None, // 没有提供工具定义
             tool_choice: None,
             thinking: None,
+            metadata: None,
         };
 
         let result = convert_request(&req).unwrap();
