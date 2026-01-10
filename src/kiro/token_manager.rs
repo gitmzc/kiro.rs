@@ -377,6 +377,19 @@ struct CredentialEntry {
     disabled: bool,
     /// 是否已检查过余额（首次使用前检查）
     balance_checked: bool,
+    /// 禁用原因（用于区分手动禁用 vs 自动禁用，便于自愈）
+    disabled_reason: Option<DisabledReason>,
+}
+
+/// 禁用原因
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DisabledReason {
+    /// Admin API 手动禁用
+    Manual,
+    /// 连续失败达到阈值后自动禁用
+    TooManyFailures,
+    /// 额度已用尽（如 MONTHLY_REQUEST_COUNT）
+    QuotaExceeded,
 }
 
 // ============================================================================
@@ -495,6 +508,7 @@ impl MultiTokenManager {
                     failure_count: 0,
                     disabled,
                     balance_checked,
+                    disabled_reason: None,
                 }
             })
             .collect();
@@ -925,6 +939,54 @@ impl MultiTokenManager {
         entries.iter().any(|e| !e.disabled)
     }
 
+    /// 报告指定凭据额度已用尽
+    ///
+    /// 用于处理 402 Payment Required 且 reason 为 `MONTHLY_REQUEST_COUNT` 的场景：
+    /// - 立即禁用该凭据（不等待连续失败阈值）
+    /// - 切换到下一个可用凭据继续重试
+    /// - 返回是否还有可用凭据
+    pub fn report_quota_exhausted(&self, id: u64) -> bool {
+        let mut entries = self.entries.lock();
+        let mut current_id = self.current_id.lock();
+
+        let entry = match entries.iter_mut().find(|e| e.id == id) {
+            Some(e) => e,
+            None => return entries.iter().any(|e| !e.disabled),
+        };
+
+        if entry.disabled {
+            return entries.iter().any(|e| !e.disabled);
+        }
+
+        entry.disabled = true;
+        entry.disabled_reason = Some(DisabledReason::QuotaExceeded);
+        // 设为阈值，便于在管理面板中直观看到该凭据已不可用
+        entry.failure_count = MAX_FAILURES_PER_CREDENTIAL;
+
+        tracing::error!(
+            "凭据 #{} 额度已用尽（MONTHLY_REQUEST_COUNT），已被禁用",
+            id
+        );
+
+        // 切换到优先级最高的可用凭据
+        if let Some(next) = entries
+            .iter()
+            .filter(|e| !e.disabled)
+            .min_by_key(|e| e.credentials.priority)
+        {
+            *current_id = next.id;
+            tracing::info!(
+                "已切换到凭据 #{}（优先级 {}）",
+                next.id,
+                next.credentials.priority
+            );
+            return true;
+        }
+
+        tracing::error!("所有凭据均已禁用！");
+        false
+    }
+
     /// 切换到优先级最高的可用凭据
     ///
     /// 返回是否成功切换
@@ -1055,6 +1117,7 @@ impl MultiTokenManager {
                 failure_count: 0,
                 disabled: false,
                 balance_checked: false,
+                disabled_reason: None,
             });
             (index, entries.len())
         };
@@ -1403,5 +1466,75 @@ mod tests {
             manager.credentials().refresh_token,
             Some("token2".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn test_multi_token_manager_acquire_context_auto_recovers_all_disabled() {
+        let config = Config::default();
+        let mut cred1 = KiroCredentials::default();
+        cred1.access_token = Some("t1".to_string());
+        cred1.expires_at = Some((Utc::now() + Duration::hours(1)).to_rfc3339());
+        let mut cred2 = KiroCredentials::default();
+        cred2.access_token = Some("t2".to_string());
+        cred2.expires_at = Some((Utc::now() + Duration::hours(1)).to_rfc3339());
+
+        let manager =
+            MultiTokenManager::new(config, vec![cred1, cred2], None, None, false).unwrap();
+
+        // 凭据会自动分配 ID（从 1 开始）
+        for _ in 0..MAX_FAILURES_PER_CREDENTIAL {
+            manager.report_failure(1);
+        }
+        for _ in 0..MAX_FAILURES_PER_CREDENTIAL {
+            manager.report_failure(2);
+        }
+
+        assert_eq!(manager.available_count(), 0);
+
+        // 应触发自愈：重置失败计数并重新启用，避免必须重启进程
+        let ctx = manager.acquire_context().await.unwrap();
+        assert!(ctx.token == "t1" || ctx.token == "t2");
+        assert_eq!(manager.available_count(), 2);
+    }
+
+    #[test]
+    fn test_multi_token_manager_report_quota_exhausted() {
+        let config = Config::default();
+        let cred1 = KiroCredentials::default();
+        let cred2 = KiroCredentials::default();
+
+        let manager =
+            MultiTokenManager::new(config, vec![cred1, cred2], None, None, false).unwrap();
+
+        // 凭据会自动分配 ID（从 1 开始）
+        assert_eq!(manager.available_count(), 2);
+        assert!(manager.report_quota_exhausted(1));
+        assert_eq!(manager.available_count(), 1);
+
+        // 再禁用第二个后，无可用凭据
+        assert!(!manager.report_quota_exhausted(2));
+        assert_eq!(manager.available_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_multi_token_manager_quota_disabled_is_not_auto_recovered() {
+        let config = Config::default();
+        let cred1 = KiroCredentials::default();
+        let cred2 = KiroCredentials::default();
+
+        let manager =
+            MultiTokenManager::new(config, vec![cred1, cred2], None, None, false).unwrap();
+
+        manager.report_quota_exhausted(1);
+        manager.report_quota_exhausted(2);
+        assert_eq!(manager.available_count(), 0);
+
+        let err = manager.acquire_context().await.err().unwrap().to_string();
+        assert!(
+            err.contains("所有凭据均已禁用"),
+            "错误应提示所有凭据禁用，实际: {}",
+            err
+        );
+        assert_eq!(manager.available_count(), 0);
     }
 }
