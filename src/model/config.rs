@@ -79,7 +79,7 @@ pub struct Config {
 
     /// HTTP 代理地址（可选）
     /// 支持格式: http://host:port, https://host:port, socks5://host:port
-    #[serde(default)]
+    #[serde(default = "default_proxy_url")]
     pub proxy_url: Option<String>,
 
     /// 代理认证用户名（可选）
@@ -132,6 +132,10 @@ fn default_count_tokens_auth_type() -> String {
     "x-api-key".to_string()
 }
 
+fn default_proxy_url() -> Option<String> {
+    Some("http://127.0.0.1:7890".to_string())
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -147,7 +151,7 @@ impl Default for Config {
             count_tokens_api_url: None,
             count_tokens_api_key: None,
             count_tokens_auth_type: default_count_tokens_auth_type(),
-            proxy_url: None,
+            proxy_url: default_proxy_url(),
             proxy_username: None,
             proxy_password: None,
             admin_api_key: None,
