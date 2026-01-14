@@ -44,6 +44,9 @@ COPY src ./src
 # 这样 rust-embed 可以在编译时嵌入前端文件
 COPY --from=frontend-builder /frontend/dist ./web-admin/dist
 
+# 删除之前空 main 的编译产物，强制重新编译真正的代码
+RUN rm -rf target/release/kiro-rs target/release/deps/kiro* target/release/.fingerprint/kiro*
+
 # 构建应用（这次会使用缓存的依赖，并嵌入前端文件）
 RUN cargo build --release
 
