@@ -744,6 +744,64 @@ impl MultiTokenManager {
         }
     }
 
+    /// 强制刷新指定凭据的 Token
+    ///
+    /// 当 API 返回 403 "invalid token" 时调用此方法
+    /// 无论 expiresAt 是否过期，都会强制刷新 token
+    ///
+    /// # Arguments
+    /// * `id` - 凭据 ID
+    ///
+    /// # Returns
+    /// 返回新的 CallContext，如果刷新失败则返回错误
+    pub async fn force_refresh_token(&self, id: u64) -> anyhow::Result<CallContext> {
+        tracing::info!("凭据 #{} 强制刷新 Token（API 返回 invalid token）", id);
+
+        // 获取刷新锁
+        let _guard = self.refresh_lock.lock().await;
+
+        // 获取当前凭据
+        let current_creds = {
+            let entries = self.entries.lock();
+            entries
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| e.credentials.clone())
+                .ok_or_else(|| anyhow::anyhow!("凭据 #{} 不存在", id))?
+        };
+
+        // 强制刷新
+        let new_creds = refresh_token(&current_creds, &self.config, self.proxy.as_ref()).await?;
+
+        if is_token_expired(&new_creds) {
+            anyhow::bail!("刷新后的 Token 仍然无效或已过期");
+        }
+
+        // 更新凭据
+        {
+            let mut entries = self.entries.lock();
+            if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                entry.credentials = new_creds.clone();
+            }
+        }
+
+        // 持久化
+        if let Err(e) = self.persist_credentials() {
+            tracing::warn!("Token 强制刷新后持久化失败: {}", e);
+        }
+
+        let token = new_creds
+            .access_token
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("刷新后没有 accessToken"))?;
+
+        Ok(CallContext {
+            id,
+            credentials: new_creds,
+            token,
+        })
+    }
+
     /// 尝试使用指定凭据获取有效 Token
     ///
     /// 使用双重检查锁定模式，确保同一时间只有一个刷新操作
@@ -1239,6 +1297,7 @@ impl MultiTokenManager {
         } else {
             credentials
                 .access_token
+                .clone()
                 .ok_or_else(|| anyhow::anyhow!("凭据无 access_token"))?
         };
 
@@ -1251,7 +1310,54 @@ impl MultiTokenManager {
                 .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
         };
 
-        get_usage_limits(&credentials, &self.config, &token, self.proxy.as_ref()).await
+        // 第一次尝试获取余额
+        match get_usage_limits(&credentials, &self.config, &token, self.proxy.as_ref()).await {
+            Ok(usage) => Ok(usage),
+            Err(e) => {
+                let err_msg = e.to_string();
+                // 检查是否是 "invalid token" 错误
+                if err_msg.contains("403") || err_msg.contains("invalid") || err_msg.contains("Invalid") {
+                    tracing::warn!("凭据 #{} 余额查询失败（token 无效），尝试强制刷新: {}", id, err_msg);
+
+                    // 强制刷新 token
+                    let current_creds = {
+                        let entries = self.entries.lock();
+                        entries
+                            .iter()
+                            .find(|e| e.id == id)
+                            .map(|e| e.credentials.clone())
+                            .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
+                    };
+
+                    let new_creds = refresh_token(&current_creds, &self.config, self.proxy.as_ref()).await?;
+
+                    // 更新凭据
+                    {
+                        let mut entries = self.entries.lock();
+                        if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                            entry.credentials = new_creds.clone();
+                        }
+                    }
+
+                    // 持久化
+                    if let Err(e) = self.persist_credentials() {
+                        tracing::warn!("Token 强制刷新后持久化失败: {}", e);
+                    }
+
+                    let new_token = new_creds
+                        .access_token
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("刷新后无 access_token"))?;
+
+                    tracing::info!("凭据 #{} 强制刷新成功，重新查询余额", id);
+
+                    // 用新 token 重试
+                    get_usage_limits(&new_creds, &self.config, &new_token, self.proxy.as_ref()).await
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     /// 检查凭据余额并在用完时自动禁用

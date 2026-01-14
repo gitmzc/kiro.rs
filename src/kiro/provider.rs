@@ -456,8 +456,92 @@ impl KiroProvider {
                 anyhow::bail!("{} API 请求失败: {} {}", api_type, status, body);
             }
 
-            // 401/403 - 更可能是凭据/权限问题：计入失败并允许故障转移
+            // 401/403 - 可能是 token 无效，先尝试强制刷新
             if matches!(status.as_u16(), 401 | 403) {
+                // 检查是否是 "invalid token" 错误
+                let is_invalid_token = body.contains("bearer token")
+                    || body.contains("invalid")
+                    || body.contains("Invalid");
+
+                if is_invalid_token {
+                    tracing::warn!(
+                        "API 请求失败（token 无效，尝试强制刷新，尝试 {}/{}）: {} {}",
+                        attempt + 1,
+                        max_retries,
+                        status,
+                        body
+                    );
+
+                    // 尝试强制刷新 token
+                    match self.token_manager.force_refresh_token(ctx.id).await {
+                        Ok(new_ctx) => {
+                            tracing::info!("凭据 #{} 强制刷新成功，重新发送请求", ctx.id);
+                            // 用新的 token 重新构建 headers 并发送请求
+                            let new_headers = match self.build_headers(&new_ctx) {
+                                Ok(h) => h,
+                                Err(e) => {
+                                    last_error = Some(e);
+                                    continue;
+                                }
+                            };
+
+                            let retry_response = match self
+                                .client
+                                .post(&url)
+                                .headers(new_headers)
+                                .body(request_body.to_string())
+                                .send()
+                                .await
+                            {
+                                Ok(resp) => resp,
+                                Err(e) => {
+                                    last_error = Some(e.into());
+                                    continue;
+                                }
+                            };
+
+                            if retry_response.status().is_success() {
+                                self.token_manager.report_success(ctx.id);
+                                return Ok(retry_response);
+                            }
+
+                            // 刷新后仍然失败，继续下一次重试
+                            let retry_body = retry_response.text().await.unwrap_or_default();
+                            last_error = Some(anyhow::anyhow!(
+                                "{} API 请求失败（刷新后仍失败）: {}",
+                                api_type,
+                                retry_body
+                            ));
+                            continue;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "凭据 #{} 强制刷新失败，切换到下一个凭据: {}",
+                                ctx.id,
+                                e
+                            );
+                            // 刷新失败，计入失败并切换凭据
+                            let has_available = self.token_manager.report_failure(ctx.id);
+                            if !has_available {
+                                anyhow::bail!(
+                                    "{} API 请求失败（所有凭据已用尽）: {} {}",
+                                    api_type,
+                                    status,
+                                    body
+                                );
+                            }
+                            last_error = Some(anyhow::anyhow!(
+                                "{} API 请求失败: {} {}",
+                                api_type,
+                                status,
+                                body
+                            ));
+                            continue;
+                        }
+                    }
+                }
+
+                // 非 invalid token 的 401/403 错误，直接切换凭据
                 tracing::warn!(
                     "API 请求失败（可能为凭据错误，尝试 {}/{}）: {} {}",
                     attempt + 1,
