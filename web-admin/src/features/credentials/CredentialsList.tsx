@@ -155,13 +155,30 @@ export function CredentialsList() {
     if (selectedIds.size === 0) return;
 
     setBatchTestingAlive(true);
-    const ids = Array.from(selectedIds);
+
+    // 只测活未被禁用的凭据
+    const enabledIds = Array.from(selectedIds).filter(id => {
+      const cred = credentials?.credentials.find(c => c.id === id);
+      return cred && !cred.disabled;
+    });
+
+    if (enabledIds.length === 0) {
+      setBatchTestingAlive(false);
+      toast.warning("所选凭据均已禁用，无需测活");
+      return;
+    }
+
+    const skippedCount = selectedIds.size - enabledIds.length;
+    if (skippedCount > 0) {
+      toast.info(`跳过 ${skippedCount} 个已禁用凭据，开始测活 ${enabledIds.length} 个凭据...`);
+    } else {
+      toast.info(`开始测活 ${enabledIds.length} 个凭据...`);
+    }
+
     let successCount = 0;
     let failCount = 0;
 
-    toast.info(`开始测活 ${ids.length} 个凭据...`);
-
-    for (const id of ids) {
+    for (const id of enabledIds) {
       try {
         const balance = await apiClient.get<BalanceResponse>(`/credentials/${id}/balance`);
         successCount++;
@@ -174,6 +191,9 @@ export function CredentialsList() {
 
     setBatchTestingAlive(false);
     toast.success(`测活完成: 成功 ${successCount} 个，失败 ${failCount} 个`);
+
+    // 刷新凭据列表以显示最新状态
+    queryClient.invalidateQueries({ queryKey: ['credentials'] });
   };
 
   if (isLoading) {
