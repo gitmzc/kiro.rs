@@ -82,7 +82,9 @@ impl AdminService {
     }
 
     /// 上传凭据（从文件上传的 JSON 格式）
-    pub fn upload_credential(&self, uploaded: UploadedCredential) -> Result<UploadCredentialResponse, AdminServiceError> {
+    ///
+    /// 会先测活并检查余额，只有测活成功且有余额才会保存凭据
+    pub async fn upload_credential(&self, uploaded: UploadedCredential) -> Result<UploadCredentialResponse, AdminServiceError> {
         let email = uploaded.email.clone();
 
         // 获取当前凭据数量作为新凭据的优先级
@@ -92,17 +94,60 @@ impl AdminService {
         let credentials = uploaded.into_kiro_credentials(priority)
             .map_err(|e| AdminServiceError::InvalidRequest(e))?;
 
-        // 添加到 token manager
-        let (index, total) = self.token_manager.add_credential(credentials)
+        // 先临时添加凭据以便测活
+        let (temp_index, _) = self.token_manager.add_credential(credentials.clone())
             .map_err(|e| AdminServiceError::InternalError(e.to_string()))?;
 
-        Ok(UploadCredentialResponse {
-            success: true,
-            message: format!("凭据已添加，索引: {}", index),
-            index,
-            total,
-            email,
-        })
+        // 获取临时添加的凭据 ID
+        let snapshot = self.token_manager.snapshot();
+        let temp_id = snapshot.entries.get(temp_index)
+            .map(|e| e.id)
+            .ok_or_else(|| AdminServiceError::InternalError("无法获取临时凭据 ID".to_string()))?;
+
+        // 测活：尝试获取余额
+        let balance_result = self.token_manager.get_usage_limits_for(temp_id).await;
+
+        match balance_result {
+            Ok(usage) => {
+                let remaining = usage.usage_limit() - usage.current_usage();
+
+                // 检查是否有余额
+                if remaining <= 0.0 {
+                    // 余额不足，删除临时凭据
+                    let _ = self.token_manager.remove_credential(temp_index);
+                    return Err(AdminServiceError::InvalidRequest(
+                        format!("凭据测活成功但余额不足 (剩余: {:.2})", remaining)
+                    ));
+                }
+
+                // 测活成功且有余额，保留凭据
+                tracing::info!(
+                    "凭据上传成功: {} (余额: {:.2}/{:.2})",
+                    email.as_deref().unwrap_or("未知"),
+                    remaining,
+                    usage.usage_limit()
+                );
+
+                let total = self.token_manager.total_count();
+                Ok(UploadCredentialResponse {
+                    success: true,
+                    message: format!("凭据已添加并测活成功，索引: {}，剩余额度: {:.2}", temp_index, remaining),
+                    index: temp_index,
+                    total,
+                    email,
+                })
+            }
+            Err(e) => {
+                // 测活失败，删除临时凭据
+                let _ = self.token_manager.remove_credential(temp_index);
+                let err_msg = e.to_string();
+                tracing::warn!("凭据测活失败: {} - {}", email.as_deref().unwrap_or("未知"), err_msg);
+
+                Err(AdminServiceError::InvalidRequest(
+                    format!("凭据测活失败: {}", err_msg)
+                ))
+            }
+        }
     }
 
     /// 删除凭据

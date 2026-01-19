@@ -140,8 +140,8 @@ pub async fn upload_credential(
                 }
             };
 
-            // 调用服务上传
-            return match state.service.upload_credential(uploaded) {
+            // 调用服务上传（现在是 async）
+            return match state.service.upload_credential(uploaded).await {
                 Ok(response) => Json(response).into_response(),
                 Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
             };
