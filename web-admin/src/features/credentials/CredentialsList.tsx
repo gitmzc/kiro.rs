@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Play, Pause, RefreshCw, Trash2 } from "lucide-react";
+import { Play, Pause, RefreshCw, Trash2, Activity } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, type CredentialsStatusResponse, type SuccessResponse, type BalanceResponse, type BatchResponse } from "@/lib/api-client";
 import { toast } from "sonner";
@@ -149,6 +149,33 @@ export function CredentialsList() {
   const hasSelection = selectedIds.size > 0;
   const isBatchLoading = batchDisabledMutation.isPending || batchResetMutation.isPending || batchDeleteMutation.isPending;
 
+  // 批量测活功能
+  const [batchTestingAlive, setBatchTestingAlive] = useState(false);
+  const batchTestAlive = async () => {
+    if (selectedIds.size === 0) return;
+
+    setBatchTestingAlive(true);
+    const ids = Array.from(selectedIds);
+    let successCount = 0;
+    let failCount = 0;
+
+    toast.info(`开始测活 ${ids.length} 个凭据...`);
+
+    for (const id of ids) {
+      try {
+        const balance = await apiClient.get<BalanceResponse>(`/credentials/${id}/balance`);
+        successCount++;
+        setBalanceInfo(prev => ({ ...prev, [id]: balance }));
+      } catch {
+        failCount++;
+        setBalanceInfo(prev => ({ ...prev, [id]: null }));
+      }
+    }
+
+    setBatchTestingAlive(false);
+    toast.success(`测活完成: 成功 ${successCount} 个，失败 ${failCount} 个`);
+  };
+
   if (isLoading) {
     return (
       <Card>
@@ -174,6 +201,12 @@ export function CredentialsList() {
       </Card>
     );
   }
+
+  // 排序：将禁用的凭据排到最后
+  const sortedCredentials = [...credentials.credentials].sort((a, b) => {
+    if (a.disabled === b.disabled) return 0;
+    return a.disabled ? 1 : -1;
+  });
 
   return (
     <Card>
@@ -208,6 +241,15 @@ export function CredentialsList() {
             >
               <RefreshCw className="h-4 w-4 mr-1" />
               批量重置
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={batchTestAlive}
+              disabled={isBatchLoading || batchTestingAlive}
+            >
+              <Activity className="h-4 w-4 mr-1" />
+              {batchTestingAlive ? "测活中..." : "批量测活"}
             </Button>
             <Button
               variant="outline"
@@ -248,7 +290,7 @@ export function CredentialsList() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {credentials.credentials.map((cred) => (
+            {sortedCredentials.map((cred) => (
               <TableRow key={cred.id}>
                 <TableCell>
                   <Checkbox
