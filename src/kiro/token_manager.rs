@@ -447,6 +447,8 @@ pub struct MultiTokenManager {
     credentials_path: Option<PathBuf>,
     /// 是否为多凭据格式（数组格式才回写）
     is_multiple_format: bool,
+    /// 会话到凭据的绑定缓存 (user_id -> (credential_id, 绑定时间))
+    session_bindings: Mutex<std::collections::HashMap<String, (u64, std::time::Instant)>>,
 }
 
 /// 每个凭据最大 API 调用失败次数
@@ -542,6 +544,7 @@ impl MultiTokenManager {
             refresh_lock: TokioMutex::new(()),
             credentials_path,
             is_multiple_format,
+            session_bindings: Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -579,7 +582,10 @@ impl MultiTokenManager {
     /// 如果 Token 过期或即将过期，会自动刷新
     /// Token 刷新失败时会尝试下一个可用凭据（不计入失败次数）
     /// 首次使用凭据时会检查余额，余额不足则自动禁用并切换
-    pub async fn acquire_context(&self) -> anyhow::Result<CallContext> {
+    ///
+    /// # Arguments
+    /// * `user_id` - 可选的用户会话 ID，用于会话粘滞（同一会话使用同一凭据）
+    pub async fn acquire_context(&self, user_id: Option<&str>) -> anyhow::Result<CallContext> {
         let total = self.total_count();
         let mut tried_count = 0;
 
@@ -632,7 +638,8 @@ impl MultiTokenManager {
                     if need_balance_check {
                         match self.check_balance_and_mark(id, &ctx).await {
                             Ok(true) => {
-                                // 余额充足，返回上下文
+                                // 余额充足，建立绑定并返回上下文
+                                self.bind_session(user_id, ctx.id);
                                 return Ok(ctx);
                             }
                             Ok(false) => {
@@ -656,10 +663,12 @@ impl MultiTokenManager {
                                 // 其他错误（网络错误等），标记为已检查，继续使用
                                 tracing::warn!("凭据 #{} 余额检查失败: {}，继续使用", id, err_msg);
                                 self.mark_balance_checked(id);
+                                self.bind_session(user_id, ctx.id);
                                 return Ok(ctx);
                             }
                         }
                     }
+                    self.bind_session(user_id, ctx.id);
                     return Ok(ctx);
                 }
                 Err(e) => {
@@ -722,6 +731,15 @@ impl MultiTokenManager {
         }
         // 持久化更改
         let _ = self.persist_credentials();
+    }
+
+    /// 建立会话到凭据的绑定
+    fn bind_session(&self, user_id: Option<&str>, credential_id: u64) {
+        if let Some(uid) = user_id {
+            let mut bindings = self.session_bindings.lock();
+            bindings.insert(uid.to_string(), (credential_id, std::time::Instant::now()));
+            tracing::info!("会话 {} 绑定到凭据 #{}", uid, credential_id);
+        }
     }
 
     /// 切换到下一个优先级最高的可用凭据（内部方法）
@@ -1073,7 +1091,7 @@ impl MultiTokenManager {
 
     /// 获取使用额度信息
     pub async fn get_usage_limits(&self) -> anyhow::Result<UsageLimitsResponse> {
-        let ctx = self.acquire_context().await?;
+        let ctx = self.acquire_context(None).await?;
         get_usage_limits(&ctx.credentials, &self.config, &ctx.token, self.proxy.as_ref()).await
     }
 
@@ -1598,7 +1616,7 @@ mod tests {
         assert_eq!(manager.available_count(), 0);
 
         // 应触发自愈：重置失败计数并重新启用，避免必须重启进程
-        let ctx = manager.acquire_context().await.unwrap();
+        let ctx = manager.acquire_context(None).await.unwrap();
         assert!(ctx.token == "t1" || ctx.token == "t2");
         assert_eq!(manager.available_count(), 2);
     }
@@ -1635,7 +1653,7 @@ mod tests {
         manager.report_quota_exhausted(2);
         assert_eq!(manager.available_count(), 0);
 
-        let err = manager.acquire_context().await.err().unwrap().to_string();
+        let err = manager.acquire_context(None).await.err().unwrap().to_string();
         assert!(
             err.contains("所有凭据均已禁用"),
             "错误应提示所有凭据禁用，实际: {}",

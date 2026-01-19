@@ -195,11 +195,12 @@ impl KiroProvider {
     ///
     /// # Arguments
     /// * `request_body` - JSON 格式的请求体字符串
+    /// * `user_id` - 可选的用户会话 ID，用于会话粘滞
     ///
     /// # Returns
     /// 返回原始的 HTTP Response，不做解析
-    pub async fn call_api(&self, request_body: &str) -> anyhow::Result<reqwest::Response> {
-        self.call_api_with_retry(request_body, false).await
+    pub async fn call_api(&self, request_body: &str, user_id: Option<&str>) -> anyhow::Result<reqwest::Response> {
+        self.call_api_with_retry(request_body, false, user_id).await
     }
 
     /// 发送流式 API 请求
@@ -212,11 +213,12 @@ impl KiroProvider {
     ///
     /// # Arguments
     /// * `request_body` - JSON 格式的请求体字符串
+    /// * `user_id` - 可选的用户会话 ID，用于会话粘滞
     ///
     /// # Returns
     /// 返回原始的 HTTP Response，调用方负责处理流式数据
-    pub async fn call_api_stream(&self, request_body: &str) -> anyhow::Result<reqwest::Response> {
-        self.call_api_with_retry(request_body, true).await
+    pub async fn call_api_stream(&self, request_body: &str, user_id: Option<&str>) -> anyhow::Result<reqwest::Response> {
+        self.call_api_with_retry(request_body, true, user_id).await
     }
 
     /// 发送 MCP API 请求
@@ -240,7 +242,7 @@ impl KiroProvider {
 
         for attempt in 0..max_retries {
             // 获取调用上下文
-            let ctx = match self.token_manager.acquire_context().await {
+            let ctx = match self.token_manager.acquire_context(None).await {
                 Ok(c) => c,
                 Err(e) => {
                     last_error = Some(e);
@@ -361,6 +363,7 @@ impl KiroProvider {
         &self,
         request_body: &str,
         is_stream: bool,
+        user_id: Option<&str>,
     ) -> anyhow::Result<reqwest::Response> {
         let total_credentials = self.token_manager.total_count();
         let max_retries = (total_credentials * MAX_RETRIES_PER_CREDENTIAL).min(MAX_TOTAL_RETRIES);
@@ -369,7 +372,7 @@ impl KiroProvider {
 
         for attempt in 0..max_retries {
             // 获取调用上下文（绑定 index、credentials、token）
-            let ctx = match self.token_manager.acquire_context().await {
+            let ctx = match self.token_manager.acquire_context(user_id).await {
                 Ok(c) => c,
                 Err(e) => {
                     last_error = Some(e);
