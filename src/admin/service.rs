@@ -144,11 +144,25 @@ impl AdminService {
 
     /// 获取凭据余额
     pub async fn get_balance(&self, id: u64) -> Result<BalanceResponse, AdminServiceError> {
-        let usage = self
+        let usage = match self
             .token_manager
             .get_usage_limits_for(id)
             .await
-            .map_err(|e| self.classify_balance_error(e, id))?;
+        {
+            Ok(usage) => usage,
+            Err(e) => {
+                let err_msg = e.to_string();
+                // 检查是否是 403 错误（账号被暂停、权限不足等）
+                if err_msg.contains("403") || err_msg.contains("SUSPENDED") || err_msg.contains("权限不足") {
+                    tracing::warn!("凭据 #{} 余额查询返回 403，自动禁用: {}", id, err_msg);
+                    // 自动禁用凭据
+                    if let Err(disable_err) = self.token_manager.set_disabled(id, true) {
+                        tracing::error!("自动禁用凭据 #{} 失败: {}", id, disable_err);
+                    }
+                }
+                return Err(self.classify_balance_error(e, id));
+            }
+        };
 
         let current_usage = usage.current_usage();
         let usage_limit = usage.usage_limit();
