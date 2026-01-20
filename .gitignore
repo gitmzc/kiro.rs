@@ -2,13 +2,18 @@
 /CLAUDE.md
 /AGENTS.md
 /config.json
-/credentials.json
+/credentials.*
 /.idea
 /test.json
 /auths
 /data
 /logs
 kiro.pid
+/Cargo.lock
+/admin-ui/node_modules/
+/admin-ui/dist/
+/admin-ui/pnpm-lock.yaml
+/admin-ui/tsconfig.tsbuildinfo
 
 # AI 工具会话文件（隐私）
 .codex-session
