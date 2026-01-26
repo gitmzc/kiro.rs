@@ -88,8 +88,8 @@ async fn main() {
     // 配置日志输出到 stdout 和 SSE 广播
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .with_ansi(false) // 禁用 ANSI 颜色代码
         .with_target(false) // 隐藏模块路径
