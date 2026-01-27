@@ -538,6 +538,7 @@ pub async fn count_tokens(JsonExtractor(payload): JsonExtractor<CountTokensReque
 /// - message_start 中的 input_tokens 是从 contextUsageEvent 计算的准确值
 pub async fn post_messages_cc(
     State(state): State<AppState>,
+    Extension(recorder): Extension<StatsRecorder>,
     JsonExtractor(payload): JsonExtractor<MessagesRequest>,
 ) -> Response {
     tracing::info!(
@@ -638,6 +639,9 @@ pub async fn post_messages_cc(
         .map(|t| t.thinking_type == "enabled")
         .unwrap_or(false);
 
+    // 提取 user_id 用于会话粘滞
+    let user_id = payload.metadata.as_ref().and_then(|m| m.user_id.as_deref());
+
     if payload.stream {
         // 流式响应（缓冲模式）
         handle_stream_request_buffered(
@@ -646,11 +650,13 @@ pub async fn post_messages_cc(
             &payload.model,
             input_tokens,
             thinking_enabled,
+            recorder,
+            user_id,
         )
         .await
     } else {
         // 非流式响应（复用现有逻辑，已经使用正确的 input_tokens）
-        handle_non_stream_request(provider, &request_body, &payload.model, input_tokens).await
+        handle_non_stream_request(provider, &request_body, &payload.model, input_tokens, recorder, user_id).await
     }
 }
 
@@ -664,12 +670,16 @@ async fn handle_stream_request_buffered(
     model: &str,
     estimated_input_tokens: i32,
     thinking_enabled: bool,
+    recorder: StatsRecorder,
+    user_id: Option<&str>,
 ) -> Response {
     // 调用 Kiro API（支持多凭据故障转移）
-    let response = match provider.call_api_stream(request_body).await {
+    let response = match provider.call_api_stream(request_body, user_id).await {
         Ok(resp) => resp,
         Err(e) => {
             tracing::error!("Kiro API 调用失败: {}", e);
+            recorder.record_tokens(estimated_input_tokens, 0, Some(model.to_string()), false);
+            recorder.complete().await;
             return (
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorResponse::new(
