@@ -99,8 +99,15 @@ impl CredentialsConfig {
         match self {
             CredentialsConfig::Single(cred) => vec![cred],
             CredentialsConfig::Multiple(mut creds) => {
-                // 按优先级排序（数字越小优先级越高）
-                creds.sort_by_key(|c| c.priority);
+                // 按 ID 降序排序（ID 大的在前面），没有 ID 的排在最后
+                creds.sort_by(|a, b| {
+                    match (a.id, b.id) {
+                        (Some(id_a), Some(id_b)) => id_b.cmp(&id_a), // ID 大的在前
+                        (Some(_), None) => std::cmp::Ordering::Less,  // 有 ID 的在前
+                        (None, Some(_)) => std::cmp::Ordering::Greater, // 无 ID 的在后
+                        (None, None) => std::cmp::Ordering::Equal,    // 都没有 ID 则相等
+                    }
+                });
                 creds
             }
         }
