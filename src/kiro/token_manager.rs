@@ -527,11 +527,11 @@ impl MultiTokenManager {
             anyhow::bail!("检测到重复的凭据 ID: {:?}", duplicate_ids);
         }
 
-        // 选择初始凭据：优先级最高（priority 最小）且未禁用的凭据
+        // 选择初始凭据：ID 最大且未禁用的凭据
         let initial_id = entries
             .iter()
             .filter(|e| !e.disabled)
-            .min_by_key(|e| e.credentials.priority)
+            .max_by_key(|e| e.id)
             .or_else(|| entries.first()) // 如果全部禁用，选第一个
             .map(|e| e.id)
             .unwrap(); // 前面已检查 non-empty
@@ -606,11 +606,11 @@ impl MultiTokenManager {
                 if let Some(entry) = entries.iter().find(|e| e.id == current_id && !e.disabled) {
                     (entry.id, entry.credentials.clone(), !entry.balance_checked)
                 } else {
-                    // 当前凭据不可用，选择优先级最高的可用凭据
+                    // 当前凭据不可用，选择 ID 最大的可用凭据
                     if let Some(entry) = entries
                         .iter()
                         .filter(|e| !e.disabled)
-                        .min_by_key(|e| e.credentials.priority)
+                        .max_by_key(|e| e.id)
                     {
                         // 先提取数据
                         let new_id = entry.id;
@@ -742,22 +742,21 @@ impl MultiTokenManager {
         }
     }
 
-    /// 切换到下一个优先级最高的可用凭据（内部方法）
+    /// 切换到下一个 ID 最大的可用凭据（内部方法）
     fn switch_to_next_by_priority(&self) {
         let entries = self.entries.lock();
         let mut current_id = self.current_id.lock();
 
-        // 选择优先级最高的未禁用凭据（排除当前凭据）
+        // 选择 ID 最大的未禁用凭据（排除当前凭据）
         if let Some(entry) = entries
             .iter()
             .filter(|e| !e.disabled && e.id != *current_id)
-            .min_by_key(|e| e.credentials.priority)
+            .max_by_key(|e| e.id)
         {
             *current_id = entry.id;
             tracing::info!(
-                "已切换到凭据 #{}（优先级 {}）",
-                entry.id,
-                entry.credentials.priority
+                "已切换到凭据 #{}",
+                entry.id
             );
         }
     }
@@ -993,17 +992,16 @@ impl MultiTokenManager {
                 failure_count
             );
 
-            // 切换到优先级最高的可用凭据
+            // 切换到 ID 最大的可用凭据
             if let Some(next) = entries
                 .iter()
                 .filter(|e| !e.disabled)
-                .min_by_key(|e| e.credentials.priority)
+                .max_by_key(|e| e.id)
             {
                 *current_id = next.id;
                 tracing::info!(
-                    "已切换到凭据 #{}（优先级 {}）",
-                    next.id,
-                    next.credentials.priority
+                    "已切换到凭据 #{}",
+                    next.id
                 );
             } else {
                 tracing::error!("所有凭据均已禁用！");
@@ -1044,17 +1042,16 @@ impl MultiTokenManager {
             id
         );
 
-        // 切换到优先级最高的可用凭据
+        // 切换到 ID 最大的可用凭据
         if let Some(next) = entries
             .iter()
             .filter(|e| !e.disabled)
-            .min_by_key(|e| e.credentials.priority)
+            .max_by_key(|e| e.id)
         {
             *current_id = next.id;
             tracing::info!(
-                "已切换到凭据 #{}（优先级 {}）",
-                next.id,
-                next.credentials.priority
+                "已切换到凭据 #{}",
+                next.id
             );
             return true;
         }
@@ -1063,24 +1060,23 @@ impl MultiTokenManager {
         false
     }
 
-    /// 切换到优先级最高的可用凭据
+    /// 切换到 ID 最大的可用凭据
     ///
     /// 返回是否成功切换
     pub fn switch_to_next(&self) -> bool {
         let entries = self.entries.lock();
         let mut current_id = self.current_id.lock();
 
-        // 选择优先级最高的未禁用凭据（排除当前凭据）
+        // 选择 ID 最大的未禁用凭据（排除当前凭据）
         if let Some(next) = entries
             .iter()
             .filter(|e| !e.disabled && e.id != *current_id)
-            .min_by_key(|e| e.credentials.priority)
+            .max_by_key(|e| e.id)
         {
             *current_id = next.id;
             tracing::info!(
-                "已切换到凭据 #{}（优先级 {}）",
-                next.id,
-                next.credentials.priority
+                "已切换到凭据 #{}",
+                next.id
             );
             true
         } else {
